@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, type-check & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.19"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Ruff lint
+        run: uv run ruff check src tests
+      - name: Ruff format check
+        run: uv run ruff format --check src tests
+      - name: Mypy
+        run: uv run mypy src
+      - name: Unit tests
+        run: uv run pytest -m "not integration" --cov --cov-report=xml
+
+  integration:
+    name: Integration tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ap
+          POSTGRES_PASSWORD: ap_password
+          POSTGRES_DB: ap_invoice_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ap -d ap_invoice_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      AP_DATABASE_URL: postgresql+asyncpg://ap:ap_password@localhost:5432/ap_invoice_test
+      AP_API_KEY_PEPPER: test-pepper-for-ci-only
+      AP_ENVIRONMENT: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.19"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Run migrations
+        run: uv run alembic upgrade head
+      - name: Integration tests
+        run: uv run pytest -m integration
