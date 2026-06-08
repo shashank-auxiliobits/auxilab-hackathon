@@ -4,14 +4,24 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ap_invoice.api.errors import AuthenticationError, AuthorizationError
 from ap_invoice.core.config import Settings, get_settings
-from ap_invoice.db.session import get_db
 from ap_invoice.models.organization import Organization
 from ap_invoice.services.auth import authenticate_api_key
+
+
+async def get_db(request: Request) -> AsyncSession:
+    """Return the request-scoped session opened by the DB middleware.
+
+    The middleware (``api/main.py``) commits it **before** the response is sent —
+    so back-to-back dependent requests never race the commit — and rolls back on
+    error. Handlers just use the session and stay declarative.
+    """
+    return request.state.db  # type: ignore[no-any-return]
+
 
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from httpx import AsyncClient
 
@@ -16,21 +18,19 @@ Grand Total: $999.00
 
 
 async def test_ingest_extracts_fields(client: AsyncClient, auth: dict[str, str]) -> None:
-    r = await client.post(
-        "/invoices/ingest?engine=deterministic", headers=auth, json={"raw_text": RAW}
-    )
+    r = await client.post("/invoices/ingest", headers=auth, json={"raw_text": RAW})
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["invoice_number"] == "INV-5001"
-    assert body["grand_total"] == "999.00"
+    assert Decimal(body["grand_total"]) == Decimal("999.00")
     assert body["status"] == "extracted"
-    assert body["extraction_source"] == "deterministic"
+    assert body["extraction_source"] == "ocr"
 
 
 async def test_ingest_idempotency(client: AsyncClient, auth: dict[str, str]) -> None:
     payload = {"raw_text": RAW, "idempotency_key": "dup-key-1"}
-    r1 = await client.post("/invoices/ingest?engine=deterministic", headers=auth, json=payload)
-    r2 = await client.post("/invoices/ingest?engine=deterministic", headers=auth, json=payload)
+    r1 = await client.post("/invoices/ingest", headers=auth, json=payload)
+    r2 = await client.post("/invoices/ingest", headers=auth, json=payload)
     assert r1.json()["id"] == r2.json()["id"]
 
 
@@ -61,7 +61,7 @@ async def test_create_from_fields_and_get(client: AsyncClient, auth: dict[str, s
 
 
 async def test_list_and_filter(client: AsyncClient, auth: dict[str, str]) -> None:
-    await client.post("/invoices/ingest?engine=deterministic", headers=auth, json={"raw_text": RAW})
+    await client.post("/invoices/ingest", headers=auth, json={"raw_text": RAW})
     r = await client.get("/invoices?status=extracted", headers=auth)
     assert r.status_code == 200
     assert r.json()["total"] >= 1

@@ -78,13 +78,44 @@ class Settings(BaseSettings):
         ),
     )
 
-    # --- LLM extractor ---------------------------------------------------
-    extractor_engine: Literal["hybrid", "llm", "deterministic"] = "hybrid"
+    # --- LLM provider (mandatory) ----------------------------------------
+    # A single multimodal provider handles BOTH stages: invoice extraction
+    # (vision over images/PDFs) and the RAG + approval decision. Choose Claude
+    # or GPT; the same model is used for both.
+    llm_provider: Literal["claude", "openai"] = "claude"
+
+    # Claude (Anthropic SDK) — vision + text capable.
     anthropic_api_key: str | None = None
-    extractor_model: str = "claude-opus-4-8"
-    extractor_fast_model: str = "claude-haiku-4-5-20251001"
+    claude_model: str = "claude-opus-4-8"
+
+    # OpenAI / GPT (vision + text capable). base_url=None → api.openai.com;
+    # set it to point at any OpenAI-compatible endpoint.
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None
+    openai_model: str = "gpt-4o"
+
+    # Shared LLM call limits (extraction + decision).
     extractor_max_tokens: int = 4096
     extractor_timeout_seconds: float = 60.0
+
+    # --- RAG / embeddings (for vendor policy documents) ------------------
+    embedding_provider: Literal["local"] = Field(
+        default="local",
+        description="Embedding backend. 'local' is a deterministic, offline embedder "
+        "(no external calls); swap for a hosted provider in production.",
+    )
+    embedding_dim: int = 256
+    rag_chunk_size: int = Field(default=1200, description="Target chunk size in characters.")
+    rag_top_k: int = Field(default=6, description="Chunks retrieved per query.")
+    policy_compiler_max_tokens: int = 4096
+
+    # --- Autonomy (touchless processing) --------------------------------
+    min_extraction_confidence: float = Field(
+        default=0.6,
+        ge=0,
+        le=1,
+        description="LLM-extracted invoices below this per-field confidence are held for review.",
+    )
 
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
@@ -100,7 +131,10 @@ class Settings(BaseSettings):
 
     @property
     def llm_available(self) -> bool:
-        return bool(self.anthropic_api_key)
+        """The configured provider has the credentials it needs (extraction + decision)."""
+        if self.llm_provider == "claude":
+            return bool(self.anthropic_api_key)
+        return bool(self.openai_api_key)
 
 
 @lru_cache

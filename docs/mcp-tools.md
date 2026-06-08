@@ -20,8 +20,15 @@ Every tool call is scoped to the authenticated organization.
 | `detect_duplicate_invoice(vendor_name?, invoice_number?, amount?, date?, amount_tolerance_pct?, lookback_days?)` | Find exact/near duplicates among the org's recent invoices. |
 | `calculate_payment_terms_tool(invoice_date, payment_terms, amount?, as_of?)` | Due date, discount deadline/amount, days remaining. |
 | `check_invoice_completeness(fields, mandatory_fields?)` | Completeness %, missing fields, recommended action. |
-| `process_invoice_text(raw_text, actor?, idempotency_key?, engine?, source?)` | **End-to-end**: extract → normalise → completeness → duplicates → terms → policy decision, persisted with an audit trail. The primary action for automating approvals. |
+| `process_invoice_text(raw_text, actor?, idempotency_key?, engine?, source?, auto_onboard?)` | **End-to-end**: extract → normalise → completeness → duplicates → terms → policy decision (incl. approved structured rules), persisted with an audit trail. `auto_onboard` (default true) auto-creates an unknown vendor as 'onboarding' so processing doesn't halt. The primary action for automating approvals. |
+| `update_invoice_status(invoice_id, status, note?, actor?)` | Set an invoice's status: `approved` / `held` / `flagged` / `rejected` (no payment). Recorded in the audit trail. |
+| `invoice_stats()` | Counts of the org's invoices by status (+ totals) — answers "how many flagged/approved invoices?". |
+| `list_invoices(status?, vendor_id?, limit?, offset?)` | Page through the org's invoices, e.g. to fetch all `flagged` or `approved` ones for further processing. |
 | `list_vendors()` | The org's vendors and statuses, to ground decisions. |
+
+> All DB-backed tools (`*_vendor*`, `*_invoice*`, `invoice_stats`, `list_invoices`)
+> are **scoped to the authenticated organization** — an agent only ever sees and
+> acts on its own org's vendors, policies, and invoices.
 
 ## Connecting (streamable-HTTP)
 

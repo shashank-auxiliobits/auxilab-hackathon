@@ -1,5 +1,5 @@
-"""Invoice Field Extractor package (hybrid LLM + deterministic engine)."""
+"""Invoice Field Extractor package (mandatory GLM OCR engine)."""
 
-from ap_invoice.services.extraction.engine import extract_invoice
+from ap_invoice.services.extraction.engine import ExtractionUnavailable, extract_invoice
 
-__all__ = ["extract_invoice"]
+__all__ = ["ExtractionUnavailable", "extract_invoice"]

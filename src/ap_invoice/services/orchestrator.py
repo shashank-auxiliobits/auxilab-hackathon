@@ -1,12 +1,15 @@
 """End-to-end invoice processing pipeline.
 
 Runs an already-extracted invoice through vendor normalisation, completeness,
-duplicate detection, payment-terms parsing, and the rule-based policy engine,
-then sets the invoice's status and recommended action — writing an immutable
-:class:`ProcessingEvent` for every step so the decision is fully auditable.
+duplicate detection, and payment-terms parsing (recorded for the audit trail),
+then hands the invoice facts to the **LLM decision engine**, which judges it
+against the vendor's policy retrieved from the vector store (RAG) and returns the
+approve/flag/hold/reject verdict. Every step writes an immutable
+:class:`ProcessingEvent` so the decision is fully auditable.
 
-This is the deterministic backbone the AI agent orchestrates: the agent calls
-it (via REST or MCP), reads the explained verdict, and acts.
+The **vendor policy is the single source of truth** for the verdict — the only
+non-policy inputs are the DB duplicate guardrail (exact duplicate → reject) and
+"no policy on file" → hold. See :mod:`ap_invoice.services.llm_decision`.
 """
 
 from __future__ import annotations
@@ -21,9 +24,10 @@ from ap_invoice.core.enums import (
     ApprovalDecision,
     InvoiceStatus,
     ProcessingEventType,
+    VendorStatus,
 )
 from ap_invoice.models.audit import ProcessingEvent
-from ap_invoice.models.invoice import Invoice
+from ap_invoice.models.invoice import Invoice, InvoiceLineItem
 from ap_invoice.models.organization import Organization
 from ap_invoice.models.vendor import Vendor, VendorPolicy
 from ap_invoice.schemas.processing import ProcessResult
@@ -38,8 +42,8 @@ from ap_invoice.schemas.tools import (
 )
 from ap_invoice.services.completeness import check_completeness
 from ap_invoice.services.duplicate_detector import detect_duplicates
+from ap_invoice.services.llm_decision import decide as decide_invoice
 from ap_invoice.services.payment_terms import calculate_payment_terms
-from ap_invoice.services.policy_engine import evaluate_policy
 from ap_invoice.services.vendor_normaliser import normalise_vendor
 
 _DUP_CANDIDATE_LIMIT = 1000
@@ -122,8 +126,15 @@ async def process_invoice(
     invoice: Invoice,
     *,
     actor: str = "agent",
+    auto_onboard: bool = False,
 ) -> ProcessResult:
-    """Run the full policy pipeline on ``invoice`` and persist the verdict + audit trail."""
+    """Run the full policy pipeline on ``invoice`` and persist the verdict + audit trail.
+
+    When ``auto_onboard`` is set, an unrecognised vendor is auto-created (status
+    ``onboarding``, with a conservative default policy and **no** auto-approve
+    limit) so processing doesn't halt — the invoice still lands in ``held`` for
+    review until the vendor is trusted, rather than being auto-approved.
+    """
     events: list[ProcessingEvent] = []
 
     # --- 1. Vendor normalisation -------------------------------------------------
@@ -147,6 +158,7 @@ async def process_invoice(
     )
 
     canonical_vendor_name: str | None = None
+    vendor_recognized = bool(vendor_result and vendor_result.is_recognized)
     if vendor_result and vendor_result.match and vendor_result.match.vendor_id:
         invoice.vendor_id = uuid.UUID(vendor_result.match.vendor_id)
         canonical_vendor_name = vendor_result.match.canonical_name
@@ -165,6 +177,34 @@ async def process_invoice(
             details=vendor_result.model_dump(mode="json") if vendor_result else {},
         )
     )
+
+    # --- 1b. Auto-onboarding (optional) -----------------------------------------
+    if auto_onboard and not vendor_recognized and invoice.raw_vendor_name:
+        new_vendor = Vendor(
+            organization_id=org.id,
+            canonical_name=invoice.raw_vendor_name.strip(),
+            status=VendorStatus.ONBOARDING,
+        )
+        db.add(new_vendor)
+        await db.flush()
+        # Conservative default policy: no auto-approve limit → clean invoices HOLD,
+        # not auto-approve, until the vendor is reviewed and trusted.
+        db.add(VendorPolicy(vendor_id=new_vendor.id, version=1, is_active=True))
+        await db.flush()
+        invoice.vendor_id = new_vendor.id
+        canonical_vendor_name = new_vendor.canonical_name
+        vendor_recognized = True
+        events.append(
+            _event(
+                org.id,
+                invoice.id,
+                actor,
+                ProcessingEventType.NOTE,
+                f"Auto-onboarded new vendor '{new_vendor.canonical_name}' (status: onboarding).",
+                tool_name="auto_onboarding",
+                details={"vendor_id": str(new_vendor.id)},
+            )
+        )
 
     # --- 2. Resolve the governing policy ----------------------------------------
     policy_model = await _active_policy(db, invoice.vendor_id) if invoice.vendor_id else None
@@ -262,14 +302,35 @@ async def process_invoice(
             )
         )
 
-    # --- 6. Policy evaluation ----------------------------------------------------
-    evaluation = evaluate_policy(
-        policy=policy,
-        amount=invoice.grand_total,
-        completeness=completeness,
+    # --- 5b. Build the invoice facts the decision needs -------------------------
+    line_items = (
+        (await db.execute(select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice.id)))
+        .scalars()
+        .all()
+    )
+    decision_fields = _invoice_fields(invoice, canonical_vendor_name)
+    decision_fields["po_number"] = invoice.extra_metadata.get("po_number")
+    decision_fields["has_purchase_order"] = bool(invoice.extra_metadata.get("po_number"))
+    decision_fields["line_items"] = [
+        {
+            "description": li.description,
+            "quantity": float(li.quantity) if li.quantity is not None else None,
+            "unit_price": float(li.unit_price) if li.unit_price is not None else None,
+            "total": float(li.line_total) if li.line_total is not None else None,
+        }
+        for li in line_items
+    ]
+
+    # --- 6. Decision — vendor policy (RAG) is the source of truth ----------------
+    # Caps/required-fields/PO/currency/terms are all read from the retrieved policy
+    # text by the LLM. The only non-policy inputs are the DB duplicate guardrail
+    # (exact duplicate → reject) and "no policy on file" → hold.
+    evaluation, decision_meta = await decide_invoice(
+        db,
+        vendor_id=invoice.vendor_id,
+        vendor_name=canonical_vendor_name or invoice.raw_vendor_name,
+        fields=decision_fields,
         duplicates=duplicates,
-        payment_terms=payment_terms,
-        vendor_recognized=(vendor_result.is_recognized if vendor_result else False),
     )
     events.append(
         _event(
@@ -278,9 +339,9 @@ async def process_invoice(
             actor,
             ProcessingEventType.POLICY_EVALUATED,
             evaluation.summary,
-            tool_name="policy_engine",
+            tool_name="llm_decision",
             decision=evaluation.decision.value,
-            details=evaluation.model_dump(mode="json"),
+            details={**evaluation.model_dump(mode="json"), **decision_meta},
         )
     )
 

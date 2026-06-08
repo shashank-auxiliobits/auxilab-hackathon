@@ -8,6 +8,9 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
+setup: ## One-command local setup + seed + run tests + live demo (first-run "test everything")
+	./scripts/setup.sh --all
+
 install: ## Install all dependencies (incl. dev) into a uv-managed venv
 	$(UV) sync --extra dev
 
@@ -25,6 +28,9 @@ migrate: ## Apply all migrations to head
 
 seed: ## Seed a demo org, API key, and vendor (prints the API key)
 	$(UV) run python scripts/seed.py
+
+demo: ## Run the local end-to-end demo against a running API (needs: make run-api)
+	$(UV) run python scripts/demo.py
 
 revision: ## Autogenerate a migration (usage: make revision m="message")
 	$(UV) run alembic revision --autogenerate -m "$(m)"

@@ -22,6 +22,21 @@ Initial release.
   ingestion & processing, the five tools, audit-trail retrieval, health probes;
   per-org API-key auth, rate limiting, structured logging.
 - **MCP server** (FastMCP) exposing the tools over streamable-HTTP and stdio with
-  per-organization authentication.
+  per-organization authentication. Includes reporting tools (`invoice_stats`,
+  `list_invoices`) so agents can query approved/flagged invoices and a REST
+  `/invoices/stats` endpoint.
 - Alembic migrations, Docker multi-stage image + Compose stack, GitHub Actions CI
   (lint, type-check, unit + integration tests), and full documentation.
+- One-command local setup script (`scripts/setup.sh` / `make setup`): installs
+  `uv` + deps, generates a `.env` with secrets, starts Postgres, runs migrations,
+  and optionally seeds a demo org + API key.
+- **Policy documents + RAG compiler**: attach a free-form vendor policy document;
+  it is chunked, embedded (offline default embedder, JSON-stored, cosine search),
+  and compiled by an LLM (deterministic fallback) into structured, typed
+  `policy_rules`. Only human-approved rules are enforced — deterministically — so
+  decisions stay reproducible and injection-safe.
+- **Autonomy (touchless processing)**: auto-onboarding of unknown vendors
+  (held, not auto-approved), confidence gating for LLM extraction, and
+  agent/human status transitions (`approve` / `hold` / `flag` / `reject`) via
+  REST `/invoices/{id}/status` and the MCP `update_invoice_status` tool. Payment
+  is intentionally out of scope.

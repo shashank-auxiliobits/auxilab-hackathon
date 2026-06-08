@@ -14,6 +14,8 @@ and an MCP server.
 | [REST API Reference](./api-reference.md) | Endpoints, auth, examples |
 | [MCP Tools Reference](./mcp-tools.md) | The tools agents call, and how to connect |
 | [Policy Engine](./policy-engine.md) | How decisions are made (auto-approve / hold / flag / reject) |
+| [Policy Documents, RAG & Autonomy](./policy-rag.md) | Attaching policy docs, the RAG compiler, structured rules, touchless processing |
+| [Local Testing & Claude Clients](./local-testing.md) | Run it locally, the demo, and connect Claude Code/Desktop/API to the MCP server |
 | [Deployment](./deployment.md) | Docker, migrations, production hardening |
 | [Contributing](../CONTRIBUTING.md) | Dev setup, workflow, quality gates |
 | [Security](../SECURITY.md) | Reporting vulnerabilities, security model |

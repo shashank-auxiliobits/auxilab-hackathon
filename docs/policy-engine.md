@@ -1,9 +1,16 @@
-# Policy Engine
+# Decision Engine
 
-The policy engine (`services/policy_engine.py`) turns the outputs of the
-individual tools into a single, explainable decision. It is **deterministic and
-side-effect-free** — given the same inputs it always returns the same verdict,
-which is what makes finance decisions auditable and reproducible.
+> **Superseded.** The decision is now made by an LLM, not a deterministic rule
+> engine. See [`services/llm_decision.py`](../src/ap_invoice/services/llm_decision.py):
+> the configured LLM (Claude / GPT / local) reads the vendor policy retrieved
+> from the RAG plus the deterministic helper-tool outputs (completeness,
+> duplicate detection, payment terms, vendor recognition) and the approved
+> compiled rules, and returns approve/flag/hold/reject with a confidence score.
+> The sections below describe the inputs it still consumes; they are now
+> *evidence for* the LLM rather than a deterministic rule set.
+
+The decision engine turns the outputs of the individual tools into a single,
+explainable verdict, grounded in the vendor's retrieved policy.
 
 ## Inputs
 

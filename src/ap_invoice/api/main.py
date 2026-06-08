@@ -15,10 +15,10 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from ap_invoice.api.errors import register_exception_handlers
-from ap_invoice.api.routes import admin, health, invoices, tools, vendors
+from ap_invoice.api.routes import admin, health, invoices, policies, tools, vendors
 from ap_invoice.core.config import get_settings
 from ap_invoice.core.logging import configure_logging, get_logger
-from ap_invoice.db.session import dispose_engine
+from ap_invoice.db.session import dispose_engine, get_sessionmaker
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "api_startup",
         environment=settings.environment,
-        extractor_engine=settings.extractor_engine,
+        llm_provider=settings.llm_provider,
         llm_available=settings.llm_available,
     )
     yield
@@ -80,11 +80,37 @@ def create_app() -> FastAPI:
         response.headers["X-Request-ID"] = request_id
         return response
 
+    @app.middleware("http")
+    async def db_session(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Open a request-scoped DB session and commit it BEFORE the response is sent.
+
+        Committing here (rather than in a yield-dependency, whose exit runs after
+        the response over real HTTP) means back-to-back dependent requests never
+        race the commit. Commits on 2xx/3xx, rolls back on 4xx/5xx or error.
+        """
+        session = get_sessionmaker()()
+        request.state.db = session
+        try:
+            response = await call_next(request)
+            if response.status_code < 400:
+                await session.commit()
+            else:
+                await session.rollback()
+            return response
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
     register_exception_handlers(app)
 
     app.include_router(health.router)
     app.include_router(admin.router)
     app.include_router(vendors.router)
+    app.include_router(policies.router)
     app.include_router(invoices.router)
     app.include_router(tools.router)
 

@@ -53,11 +53,12 @@ Never use `create_all` in production — it is only used by the integration test
       deploy rather than per-replica.
 - [ ] Monitor `/health/ready` and ship the JSON logs to your aggregator.
 
-## Running without the LLM
+## LLM is mandatory
 
-If `AP_ANTHROPIC_API_KEY` is unset, the extractor runs in deterministic mode and
-the whole system works offline — useful for air-gapped deployments or to avoid
-per-token cost. Set `AP_EXTRACTOR_ENGINE=deterministic` to force it.
+Both invoice extraction (vision) and the approval decision are handled by one
+configured LLM provider and are required; there is no offline/deterministic
+fallback. Set `AP_LLM_PROVIDER` (`claude` or `openai`) and its API key. To point
+GPT at an OpenAI-compatible gateway, set `AP_OPENAI_BASE_URL`.
 
 ## Kubernetes (sketch)
 

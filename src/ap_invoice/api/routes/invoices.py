@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
 from typing import Annotated
 
@@ -11,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from ap_invoice.api.deps import CurrentOrg, DBSession
-from ap_invoice.api.errors import NotFoundError
+from ap_invoice.api.errors import NotFoundError, ValidationError
 from ap_invoice.core.enums import InvoiceStatus
 from ap_invoice.models.audit import ProcessingEvent
 from ap_invoice.models.invoice import Invoice, InvoiceLineItem
@@ -22,7 +24,13 @@ from ap_invoice.schemas.invoice import (
     InvoiceIngest,
     InvoiceRead,
 )
-from ap_invoice.schemas.processing import ProcessingEventRead, ProcessRequest, ProcessResult
+from ap_invoice.schemas.policy_document import StatusTransitionRequest
+from ap_invoice.schemas.processing import (
+    InvoiceStats,
+    ProcessingEventRead,
+    ProcessRequest,
+    ProcessResult,
+)
 from ap_invoice.services.extraction import extract_invoice
 from ap_invoice.services.ingestion import (
     compute_fingerprint,
@@ -30,8 +38,20 @@ from ap_invoice.services.ingestion import (
     invoice_from_extracted,
 )
 from ap_invoice.services.orchestrator import process_invoice
+from ap_invoice.services.reporting import invoice_status_counts, invoice_totals
+from ap_invoice.services.workflow import InvalidTransitionError, transition_status
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
+
+
+def _decode_file(file_base64: str | None) -> bytes | None:
+    """Decode an optional base64 invoice file, raising a 422 on malformed input."""
+    if not file_base64:
+        return None
+    try:
+        return base64.b64decode(file_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValidationError(f"file_base64 is not valid base64: {exc}") from exc
 
 
 async def _load_detail(db: DBSession, invoice_id: uuid.UUID) -> Invoice:
@@ -106,17 +126,19 @@ async def ingest_invoice(
     payload: InvoiceIngest,
     org: CurrentOrg,
     db: DBSession,
-    engine: Annotated[str | None, Query(description="Override extraction engine.")] = None,
 ) -> InvoiceDetail:
     existing = await find_by_idempotency(db, org.id, payload.idempotency_key)
     if existing is not None:
         return InvoiceDetail.model_validate(await _load_detail(db, existing.id))
 
-    extracted = await extract_invoice(payload.raw_text, engine=engine)  # type: ignore[arg-type]
+    file_bytes = _decode_file(payload.file_base64)
+    extracted = await extract_invoice(
+        payload.raw_text, file_bytes=file_bytes, content_type=payload.content_type
+    )
     invoice = invoice_from_extracted(
         org.id,
         extracted,
-        raw_text=payload.raw_text,
+        raw_text=payload.raw_text or "",
         source=payload.source,
         idempotency_key=payload.idempotency_key,
         extra_metadata=payload.extra_metadata,
@@ -154,6 +176,18 @@ async def list_invoices(
     )
 
 
+@router.get("/stats", response_model=InvoiceStats, summary="Aggregated invoice counts")
+async def invoice_stats(org: CurrentOrg, db: DBSession) -> InvoiceStats:
+    """Counts of the org's invoices by status, plus totals — for dashboards/agents."""
+    counts = await invoice_status_counts(db, org.id)
+    total_invoices, total_amount = await invoice_totals(db, org.id)
+    return InvoiceStats(
+        total_invoices=total_invoices,
+        total_amount=total_amount,
+        by_status=counts,
+    )
+
+
 async def _get_invoice(db: DBSession, org_id: uuid.UUID, invoice_id: uuid.UUID) -> Invoice:
     invoice = await db.get(Invoice, invoice_id)
     if invoice is None or invoice.organization_id != org_id:
@@ -186,20 +220,27 @@ async def process_raw_invoice(
     """Extract → normalise → completeness → duplicates → terms → decide, with audit trail."""
     existing = await find_by_idempotency(db, org.id, payload.idempotency_key)
     if existing is not None:
-        return await process_invoice(db, org, existing, actor=payload.actor)
+        return await process_invoice(
+            db, org, existing, actor=payload.actor, auto_onboard=payload.auto_onboard
+        )
 
-    extracted = await extract_invoice(payload.raw_text, engine=payload.engine)  # type: ignore[arg-type]
+    file_bytes = _decode_file(payload.file_base64)
+    extracted = await extract_invoice(
+        payload.raw_text, file_bytes=file_bytes, content_type=payload.content_type
+    )
     invoice = invoice_from_extracted(
         org.id,
         extracted,
-        raw_text=payload.raw_text,
+        raw_text=payload.raw_text or "",
         source=payload.source,
         idempotency_key=payload.idempotency_key,
         extra_metadata=payload.extra_metadata,
     )
     db.add(invoice)
     await db.flush()
-    return await process_invoice(db, org, invoice, actor=payload.actor)
+    return await process_invoice(
+        db, org, invoice, actor=payload.actor, auto_onboard=payload.auto_onboard
+    )
 
 
 @router.post(
@@ -212,9 +253,28 @@ async def process_existing_invoice(
     org: CurrentOrg,
     db: DBSession,
     actor: Annotated[str, Query(max_length=255)] = "agent",
+    auto_onboard: Annotated[bool, Query()] = True,
 ) -> ProcessResult:
     invoice = await _get_invoice(db, org.id, invoice_id)
-    return await process_invoice(db, org, invoice, actor=actor)
+    return await process_invoice(db, org, invoice, actor=actor, auto_onboard=auto_onboard)
+
+
+@router.post(
+    "/{invoice_id}/status",
+    response_model=InvoiceDetail,
+    summary="Set an invoice's status (approve / hold / flag / reject)",
+)
+async def set_invoice_status(
+    invoice_id: uuid.UUID, payload: StatusTransitionRequest, org: CurrentOrg, db: DBSession
+) -> InvoiceDetail:
+    invoice = await _get_invoice(db, org.id, invoice_id)
+    try:
+        await transition_status(
+            db, org, invoice, payload.status, actor=payload.actor, note=payload.note
+        )
+    except InvalidTransitionError as exc:
+        raise ValidationError(str(exc)) from exc
+    return InvoiceDetail.model_validate(await _load_detail(db, invoice_id))
 
 
 @router.get(

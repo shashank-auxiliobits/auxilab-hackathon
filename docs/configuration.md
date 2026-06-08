@@ -42,15 +42,20 @@ orchestrator's secret store. See [`.env.example`](../.env.example).
 | `AP_MCP_TRANSPORT` | `streamable-http` | `streamable-http` or `stdio` |
 | `AP_MCP_API_KEY` | _(unset)_ | API key used to scope stdio calls (no HTTP headers). Over HTTP, clients send their own. |
 
-## LLM extractor
+## LLM provider (mandatory)
+One multimodal provider handles **both** stages — invoice extraction (vision over
+images/PDFs) and the RAG + approval decision. Choose Claude or GPT.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AP_EXTRACTOR_ENGINE` | `hybrid` | `hybrid` / `llm` / `deterministic` |
-| `AP_ANTHROPIC_API_KEY` | _(unset)_ | required for `hybrid`/`llm` |
-| `AP_EXTRACTOR_MODEL` | `claude-opus-4-8` | extraction model |
-| `AP_EXTRACTOR_FAST_MODEL` | `claude-haiku-4-5-20251001` | fast-path model |
-| `AP_EXTRACTOR_MAX_TOKENS` | `4096` | |
-| `AP_EXTRACTOR_TIMEOUT_SECONDS` | `60` | |
+| `AP_LLM_PROVIDER` | `claude` | `claude` / `openai` |
+| `AP_ANTHROPIC_API_KEY` | _(unset)_ | required when provider is `claude` |
+| `AP_CLAUDE_MODEL` | `claude-opus-4-8` | Claude model (vision + decision) |
+| `AP_OPENAI_API_KEY` | _(unset)_ | required when provider is `openai` |
+| `AP_OPENAI_BASE_URL` | _(unset)_ | blank → api.openai.com |
+| `AP_OPENAI_MODEL` | `gpt-4o` | GPT model (vision + decision) |
+| `AP_EXTRACTOR_MAX_TOKENS` | `4096` | shared LLM token cap |
+| `AP_EXTRACTOR_TIMEOUT_SECONDS` | `60` | shared LLM call timeout |
 
-> Without `AP_ANTHROPIC_API_KEY`, the `hybrid` engine automatically degrades to
-> the deterministic extractor — the system runs fully offline.
+> The LLM is mandatory: if the configured provider has no key, processing fails
+> loudly rather than degrading to an offline path.

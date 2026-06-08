@@ -57,9 +57,12 @@ trivially unit-testable and reusable from REST, MCP, and the orchestrator.
   matching and an amount tolerance.
 - `payment_terms.py` — parses `Net 30`, `2/10 Net 30`, `Due on Receipt`, `EOM`, …
 - `completeness.py` — mandatory-field validation and a recommended action.
-- `policy_engine.py` — combines the checks into an auditable decision.
+- `extraction/ocr.py` — mandatory GLM OCR extraction (text / image / PDF / photo).
+- `llm/providers.py` — provider-agnostic LLM tool-calling (Claude / GPT / local / GLM).
+- `llm_decision.py` — the LLM decision engine: retrieves the vendor policy from the
+  RAG and combines it with the helper-tool outputs into an auditable verdict.
 - `orchestrator.py` — the end-to-end pipeline that runs the checks against the
-  database, persists the verdict, and writes the audit trail.
+  database, calls the LLM decision, persists the verdict, and writes the audit trail.
 
 ### 2. Data layer (`ap_invoice/db/`, `ap_invoice/models/`)
 

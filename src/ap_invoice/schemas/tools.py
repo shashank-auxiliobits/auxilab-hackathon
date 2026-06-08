@@ -29,14 +29,18 @@ class ExtractedLineItem(BaseModel):
 
 
 class ExtractRequest(BaseModel):
-    raw_text: str = Field(min_length=1, description="Raw invoice text, e.g. extracted from a PDF.")
-    engine: Literal["hybrid", "llm", "deterministic"] | None = Field(
-        default=None, description="Override the configured extraction engine."
+    raw_text: str | None = Field(default=None, description="Raw invoice text, if available.")
+    file_base64: str | None = Field(
+        default=None, description="Base64-encoded invoice file (image or PDF) for GLM OCR."
+    )
+    content_type: str | None = Field(
+        default=None, description="MIME type of file_base64, e.g. 'image/png'."
     )
 
 
 class ExtractedInvoice(BaseModel):
     invoice_number: str | None = None
+    po_number: str | None = None
     vendor_name: str | None = None
     invoice_date: date | None = None
     due_date: date | None = None
@@ -48,7 +52,7 @@ class ExtractedInvoice(BaseModel):
     payment_terms: str | None = None
     # Per-field confidence in [0, 1]. Keys match the field names above.
     confidence: dict[str, float] = Field(default_factory=dict)
-    source: ExtractionSource = ExtractionSource.DETERMINISTIC
+    source: ExtractionSource = ExtractionSource.OCR
     notes: list[str] = Field(default_factory=list)
 
     def as_fields(self) -> dict[str, Any]:
@@ -245,6 +249,30 @@ class PolicySnapshot(BaseModel):
     amount_tolerance_pct: Decimal = Decimal("5")
     duplicate_lookback_days: int = 90
     allow_early_payment_discount: bool = True
+
+
+class PolicyRuleSnapshot(BaseModel):
+    """An approved structured rule, flattened for the engine."""
+
+    rule_type: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    description: str | None = None
+
+
+class PolicyLineItemContext(BaseModel):
+    description: str | None = None
+    unit_price: Decimal | None = None
+
+
+class PolicyInvoiceContext(BaseModel):
+    """Invoice facts the rule engine needs beyond the basic checks."""
+
+    amount: Decimal | None = None
+    currency: str | None = None
+    payment_terms: str | None = None
+    has_purchase_order: bool = False
+    fields: dict[str, Any] = Field(default_factory=dict)
+    line_items: list[PolicyLineItemContext] = Field(default_factory=list)
 
 
 class PolicyCheck(BaseModel):

@@ -66,7 +66,37 @@ class ProcessingEventType(StrEnum):
 class ExtractionSource(StrEnum):
     """Which engine produced an extraction result."""
 
+    OCR = "ocr"  # GLM vision OCR (current extraction path)
     LLM = "llm"
-    DETERMINISTIC = "deterministic"
-    HYBRID = "hybrid"
+    DETERMINISTIC = "deterministic"  # legacy; retained for previously-stored rows
+    HYBRID = "hybrid"  # legacy; retained for previously-stored rows
     MANUAL = "manual"
+
+
+class DocumentStatus(StrEnum):
+    """Lifecycle of an uploaded vendor policy document."""
+
+    UPLOADED = "uploaded"
+    CHUNKED = "chunked"
+    COMPILED = "compiled"
+    FAILED = "failed"
+
+
+class PolicyRuleType(StrEnum):
+    """Kinds of structured, machine-enforceable rules compiled from a policy doc."""
+
+    MAX_INVOICE_AMOUNT = "max_invoice_amount"  # params: {amount}
+    REQUIRE_FIELD = "require_field"  # params: {field}
+    ALLOWED_PAYMENT_TERMS = "allowed_payment_terms"  # params: {terms: [...]}
+    LINE_ITEM_PRICE_CAP = "line_item_price_cap"  # params: {keyword, max_unit_price}
+    REQUIRES_PURCHASE_ORDER = "requires_purchase_order"  # params: {}
+    CURRENCY = "currency"  # params: {currency}
+    CUSTOM = "custom"  # params: {description} — advisory, not auto-enforceable
+
+
+class PolicyRuleStatus(StrEnum):
+    """Approval state of a compiled rule (a human/vendor confirms before enforcement)."""
+
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    REJECTED = "rejected"

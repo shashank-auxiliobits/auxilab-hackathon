@@ -57,6 +57,11 @@ def invoice_from_extracted(
     extra_metadata: dict[str, Any] | None = None,
 ) -> Invoice:
     """Build a persisted-ready Invoice (with line items) from an extraction."""
+    # Carry an extracted PO number into metadata so the decision can see it
+    # (a caller-supplied po_number takes precedence).
+    metadata = dict(extra_metadata or {})
+    if extracted.po_number and not metadata.get("po_number"):
+        metadata["po_number"] = extracted.po_number
     invoice = Invoice(
         organization_id=org_id,
         raw_vendor_name=extracted.vendor_name,
@@ -71,7 +76,7 @@ def invoice_from_extracted(
         raw_text=raw_text,
         source=source,
         idempotency_key=idempotency_key,
-        extra_metadata=extra_metadata or {},
+        extra_metadata=metadata,
         status=InvoiceStatus.EXTRACTED,
         extraction_source=extracted.source,
         extraction_confidence=extracted.confidence,

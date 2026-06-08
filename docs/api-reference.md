@@ -55,13 +55,27 @@ Errors use a consistent envelope:
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/invoices` | create from known fields |
-| POST | `/invoices/ingest` | ingest raw text → extract & store (`?engine=`) |
-| POST | `/invoices/process` | **ingest + run the full policy pipeline** |
+| POST | `/invoices/ingest` | ingest text or a file (`file_base64`+`content_type`) → GLM OCR & store |
+| POST | `/invoices/process` | **ingest + run the full LLM decision pipeline** |
 | POST | `/invoices/{id}/process` | re-run the pipeline on an existing invoice |
+| POST | `/invoices/{id}/status` | set status (approve / hold / flag / reject) |
 | GET | `/invoices` | list (`?status=`, `?vendor_id=`, paginated) |
+| GET | `/invoices/stats` | aggregated counts by status + totals |
 | GET | `/invoices/{id}` | detail (with line items) |
 | GET | `/invoices/{id}/events` | **audit trail** |
 | DELETE | `/invoices/{id}` | delete |
+
+## Policy documents & rules (API key)
+RAG policy onboarding — see [Policy Documents, RAG & Autonomy](./policy-rag.md).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/vendors/{id}/documents` | attach a policy doc → embed + compile structured rules |
+| GET | `/vendors/{id}/documents` | list policy documents |
+| GET | `/vendors/{id}/rules` | list compiled rules (`?status=`) |
+| POST | `/vendors/{id}/rules/{rule_id}/approve` | approve a rule (only approved rules are enforced) |
+| POST | `/vendors/{id}/rules/{rule_id}/reject` | reject a rule |
+| GET | `/vendors/{id}/policy-search?q=` | semantic search over the vendor's policy docs |
 
 ## Tools (API key)
 Stateless and DB-backed variants of the five tools.

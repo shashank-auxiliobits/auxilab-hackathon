@@ -62,30 +62,34 @@ pytest / ruff / mypy · Docker.
 
 ### Local development
 
+**One command** — installs `uv`, dependencies, generates a `.env` with secrets,
+starts Postgres, runs migrations, seeds a demo org + API key, **runs the full
+test suite, and runs a live end-to-end demo**:
+
 ```bash
-# 1. Install dependencies
-make install
-
-# 2. Start PostgreSQL
-make db-up
-
-# 3. Configure environment
-cp .env.example .env
-# generate a real pepper:
-python -c "import secrets; print('AP_API_KEY_PEPPER=' + secrets.token_urlsafe(48))" >> .env
-
-# 4. Apply migrations
-make migrate
-
-# 5. Seed a demo org + API key + vendor (prints the key)
-make seed
-
-# 6. Run the API (http://127.0.0.1:8000/docs)
-make run-api
-
-# 7. In another shell, run the MCP server
-make run-mcp
+./scripts/setup.sh --all      # or: make setup
 ```
+
+(Use `./scripts/setup.sh` alone for setup only, or `--seed` to just add demo data.)
+
+Then run the services:
+
+```bash
+make run-api     # REST API  → http://127.0.0.1:8000/docs
+make run-mcp     # MCP server → http://127.0.0.1:8080/mcp
+```
+
+<details>
+<summary>Manual setup (if you prefer step-by-step)</summary>
+
+```bash
+make install                                   # deps into a uv venv
+make db-up                                      # start PostgreSQL
+cp .env.example .env                            # then set AP_API_KEY_PEPPER & AP_ADMIN_TOKEN
+make migrate                                     # apply migrations
+make seed                                        # demo org + API key (prints the key)
+```
+</details>
 
 Then process your first invoice (use the API key printed by `make seed`):
 

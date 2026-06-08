@@ -1,54 +1,78 @@
-"""Unit tests for the deterministic invoice extractor."""
+"""Unit tests for the GLM OCR extraction path.
+
+The GLM provider call is stubbed by the autouse ``_stub_llm`` fixture in
+``tests/conftest.py`` (a regex OCR parser), so these exercise the real
+``extract_invoice`` / ``extract_with_vision`` plumbing without any network call.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
+
+import pytest
 
 from ap_invoice.core.enums import ExtractionSource
-from ap_invoice.services.extraction import extract_invoice
-from ap_invoice.services.extraction.deterministic import extract_deterministic
+from ap_invoice.services.extraction import ExtractionUnavailable, extract_invoice
+from ap_invoice.services.extraction.ocr import _pdf_to_image_parts, extract_with_vision
 
 SAMPLE = """ACME WIDGETS LLC
 Invoice Number: INV-2026-042
 Invoice Date: 2026-06-01
 Due Date: 2026-07-01
 Payment Terms: 2/10 Net 30
-Widget A    2    50.00    100.00
 Subtotal: $100.00
 Tax (10%): $10.00
 Grand Total: $110.00
 """
 
 
-def test_deterministic_extraction() -> None:
-    r = extract_deterministic(SAMPLE)
+def test_ocr_extraction_from_text() -> None:
+    r = asyncio.run(extract_invoice(SAMPLE))
     assert r.invoice_number == "INV-2026-042"
     assert r.invoice_date == date(2026, 6, 1)
     assert r.due_date == date(2026, 7, 1)
     assert r.grand_total == Decimal("110.00")
-    assert r.subtotal == Decimal("100.00")
-    assert r.tax == Decimal("10.00")
-    assert r.payment_terms is not None
-    assert r.source == ExtractionSource.DETERMINISTIC
-    assert "invoice_number" in r.confidence
-    assert len(r.line_items) == 1
-    assert r.line_items[0].quantity == Decimal("2")
+    assert r.source == ExtractionSource.OCR
+    assert r.confidence["invoice_number"] > 0
 
 
-def test_engine_router_deterministic() -> None:
-    r = asyncio.run(extract_invoice(SAMPLE, engine="deterministic"))
-    assert r.invoice_number == "INV-2026-042"
+def test_extract_with_vision_text_path() -> None:
+    r = asyncio.run(extract_with_vision(raw_text=SAMPLE))
+    assert r.vendor_name == "ACME WIDGETS LLC"
+    assert r.source == ExtractionSource.OCR
 
 
-def test_hybrid_without_llm_falls_back() -> None:
-    # No API key configured in the test env → hybrid degrades to deterministic.
-    r = asyncio.run(extract_invoice(SAMPLE, engine="hybrid"))
-    assert r.source == ExtractionSource.DETERMINISTIC
-    assert r.grand_total == Decimal("110.00")
+def test_no_input_raises() -> None:
+    with pytest.raises(ExtractionUnavailable):
+        asyncio.run(extract_invoice())
 
 
-def test_grand_total_inferred_when_unlabelled() -> None:
-    r = extract_deterministic("Some vendor\nAmount 5\nBig number 999.99\n")
-    assert r.grand_total == Decimal("999.99")
+def test_unsupported_content_type_raises() -> None:
+    with pytest.raises(ExtractionUnavailable):
+        asyncio.run(extract_invoice(file_bytes=b"x", content_type="application/zip"))
+
+
+def _one_page_pdf() -> bytes:
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    pdf.new_page(200, 200)
+    buf = BytesIO()
+    pdf.save(buf)
+    return buf.getvalue()
+
+
+def test_pdf_rasterises_to_image_parts() -> None:
+    parts = _pdf_to_image_parts(_one_page_pdf())
+    assert parts and parts[0]["media_type"] == "image/png"
+    # The base64 payload decodes to a PNG (starts with the PNG magic bytes).
+    assert base64.b64decode(parts[0]["data"]).startswith(b"\x89PNG")
+
+
+def test_pdf_extraction_path_runs() -> None:
+    r = asyncio.run(extract_invoice(file_bytes=_one_page_pdf(), content_type="application/pdf"))
+    assert r.source == ExtractionSource.OCR

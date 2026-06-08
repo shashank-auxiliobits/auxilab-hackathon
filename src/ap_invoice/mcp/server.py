@@ -8,16 +8,19 @@ scoped to the authenticated organization.
 
 from __future__ import annotations
 
+import base64
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ap_invoice.core.config import get_settings
+from ap_invoice.core.enums import InvoiceStatus
 from ap_invoice.core.logging import configure_logging, get_logger
 from ap_invoice.db.session import session_scope
 from ap_invoice.models.invoice import Invoice
@@ -40,6 +43,8 @@ from ap_invoice.services import (
 from ap_invoice.services.auth import authenticate_api_key
 from ap_invoice.services.ingestion import find_by_idempotency, invoice_from_extracted
 from ap_invoice.services.orchestrator import process_invoice
+from ap_invoice.services.reporting import invoice_status_counts, invoice_totals
+from ap_invoice.services.workflow import InvalidTransitionError, transition_status
 
 logger = get_logger(__name__)
 
@@ -106,18 +111,24 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     async def extract_invoice_fields(
-        raw_text: str,
-        engine: str | None = None,
+        raw_text: str | None = None,
+        file_base64: str | None = None,
+        content_type: str | None = None,
         ctx: Ctx | None = None,
     ) -> dict[str, Any]:
-        """Invoice Field Extractor.
+        """Invoice Field Extractor (GLM OCR).
 
-        Parse raw invoice text into structured fields (invoice number, vendor,
-        dates, line items, subtotal, tax, grand total) with a confidence score
-        per field. ``engine`` may be 'hybrid', 'llm', or 'deterministic'.
+        Parse an invoice into structured fields (invoice number, vendor, dates,
+        line items, subtotal, tax, grand total) with a confidence score per
+        field. Accepts ``raw_text`` and/or a base64 file (``file_base64`` +
+        ``content_type``, e.g. 'image/png' or 'application/pdf') for scanned
+        copies and photos. Extraction always runs through the GLM vision model.
         """
+        file_bytes = base64.b64decode(file_base64) if file_base64 else None
         async with _org_session(ctx):
-            result = await extract_invoice(raw_text, engine=engine)  # type: ignore[arg-type]
+            result = await extract_invoice(
+                raw_text, file_bytes=file_bytes, content_type=content_type
+            )
         return result.model_dump(mode="json")
 
     @mcp.tool()
@@ -247,38 +258,151 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     async def process_invoice_text(
-        raw_text: str,
+        raw_text: str | None = None,
+        file_base64: str | None = None,
+        content_type: str | None = None,
         actor: str = "agent",
         idempotency_key: str | None = None,
-        engine: str | None = None,
         source: str = "agent",
+        auto_onboard: bool = True,
         ctx: Ctx | None = None,
     ) -> dict[str, Any]:
         """Process an invoice end-to-end and persist the decision + audit trail.
 
-        Extracts fields from raw text, resolves the vendor, checks completeness
-        and duplicates, computes payment terms, applies the vendor's policy, and
-        records the verdict (auto_approve / hold / flag / reject) with a full
-        audit trail. Returns the explained decision. This is the primary action
-        for automating approvals.
+        Extracts fields via GLM OCR (from ``raw_text`` and/or a base64 file —
+        ``file_base64`` + ``content_type`` for scanned copies, PDFs, or photos),
+        resolves the vendor, checks completeness and duplicates, computes payment
+        terms, then has the decision LLM judge the invoice against the vendor's
+        policy (retrieved from the RAG) and records the verdict (auto_approve /
+        hold / flag / reject) with confidence and a full audit trail. With
+        ``auto_onboard`` (default true), an unrecognised vendor is auto-created
+        as 'onboarding' so processing doesn't halt — the invoice still holds for
+        review until the vendor is trusted. The primary action for automation.
         """
+        file_bytes = base64.b64decode(file_base64) if file_base64 else None
         async with _org_session(ctx) as (org, db):
             existing = await find_by_idempotency(db, org.id, idempotency_key)
             if existing is not None:
-                result = await process_invoice(db, org, existing, actor=actor)
+                result = await process_invoice(
+                    db, org, existing, actor=actor, auto_onboard=auto_onboard
+                )
                 return result.model_dump(mode="json")
-            extracted = await extract_invoice(raw_text, engine=engine)  # type: ignore[arg-type]
+            extracted = await extract_invoice(
+                raw_text, file_bytes=file_bytes, content_type=content_type
+            )
             invoice = invoice_from_extracted(
                 org.id,
                 extracted,
-                raw_text=raw_text,
+                raw_text=raw_text or "",
                 source=source,
                 idempotency_key=idempotency_key,
             )
             db.add(invoice)
             await db.flush()
-            result = await process_invoice(db, org, invoice, actor=actor)
+            result = await process_invoice(db, org, invoice, actor=actor, auto_onboard=auto_onboard)
             return result.model_dump(mode="json")
+
+    @mcp.tool()
+    async def update_invoice_status(
+        invoice_id: str,
+        status: str,
+        note: str | None = None,
+        actor: str = "agent",
+        ctx: Ctx | None = None,
+    ) -> dict[str, Any]:
+        """Set an invoice's status: 'approved', 'held', 'flagged', or 'rejected'.
+
+        Records the change (with actor + note) in the audit trail. Payment is not
+        handled here. Use after reviewing a processed invoice's decision.
+        """
+        async with _org_session(ctx) as (org, db):
+            invoice = await db.get(Invoice, uuid.UUID(invoice_id))
+            if invoice is None or invoice.organization_id != org.id:
+                raise ToolError(f"Invoice {invoice_id} not found.")
+            try:
+                target = InvoiceStatus(status)
+            except ValueError as exc:
+                raise ToolError(f"Unknown status '{status}'.") from exc
+            try:
+                await transition_status(db, org, invoice, target, actor=actor, note=note)
+            except InvalidTransitionError as exc:
+                raise ToolError(str(exc)) from exc
+            return {
+                "invoice_id": str(invoice.id),
+                "status": invoice.status.value,
+                "note": note,
+            }
+
+    @mcp.tool()
+    async def invoice_stats(ctx: Ctx | None = None) -> dict[str, Any]:
+        """Aggregated invoice counts for the organization.
+
+        Returns the total invoice count, the summed grand total, and a breakdown
+        of counts by status (approved / held / flagged / rejected / paid / ...).
+        Use this to answer questions like "how many flagged invoices?".
+        """
+        async with _org_session(ctx) as (org, db):
+            counts = await invoice_status_counts(db, org.id)
+            total_invoices, total_amount = await invoice_totals(db, org.id)
+            return {
+                "total_invoices": total_invoices,
+                "total_amount": str(total_amount),
+                "by_status": counts,
+            }
+
+    @mcp.tool()
+    async def list_invoices(
+        status: str | None = None,
+        vendor_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        ctx: Ctx | None = None,
+    ) -> dict[str, Any]:
+        """List the organization's invoices, optionally filtered by status or vendor.
+
+        ``status`` is one of received/extracted/normalized/validated/approved/held/
+        flagged/rejected/paid. Returns a page of invoices plus the total count, for
+        reviewing or further-processing approved or flagged invoices.
+        """
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+        async with _org_session(ctx) as (org, db):
+            base = select(Invoice).where(Invoice.organization_id == org.id)
+            if status:
+                base = base.where(Invoice.status == status)
+            if vendor_id:
+                base = base.where(Invoice.vendor_id == uuid.UUID(vendor_id))
+            total = (
+                await db.execute(select(func.count()).select_from(base.subquery()))
+            ).scalar_one()
+            rows = (
+                (
+                    await db.execute(
+                        base.order_by(Invoice.created_at.desc()).limit(limit).offset(offset)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "invoices": [
+                    {
+                        "id": str(i.id),
+                        "invoice_number": i.invoice_number,
+                        "vendor_name": i.raw_vendor_name,
+                        "grand_total": str(i.grand_total) if i.grand_total is not None else None,
+                        "status": i.status.value,
+                        "recommended_action": (
+                            i.recommended_action.value if i.recommended_action else None
+                        ),
+                        "invoice_date": i.invoice_date.isoformat() if i.invoice_date else None,
+                    }
+                    for i in rows
+                ],
+            }
 
     @mcp.tool()
     async def list_vendors(ctx: Ctx | None = None) -> dict[str, Any]:
@@ -315,6 +439,9 @@ def build_server() -> FastMCP:
         normalise_vendor_name,
         detect_duplicate_invoice,
         process_invoice_text,
+        update_invoice_status,
+        invoice_stats,
+        list_invoices,
         list_vendors,
     )
     return mcp

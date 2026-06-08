@@ -8,6 +8,8 @@ not have to supply them.
 
 from __future__ import annotations
 
+import base64
+
 from fastapi import APIRouter
 from sqlalchemy import select
 
@@ -42,9 +44,12 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 _DUP_CANDIDATE_LIMIT = 1000
 
 
-@router.post("/extract", response_model=ExtractedInvoice, summary="Invoice Field Extractor")
+@router.post("/extract", response_model=ExtractedInvoice, summary="Invoice Field Extractor (OCR)")
 async def tool_extract(payload: ExtractRequest, _: CurrentOrg) -> ExtractedInvoice:
-    return await extract_invoice(payload.raw_text, engine=payload.engine)
+    file_bytes = base64.b64decode(payload.file_base64) if payload.file_base64 else None
+    return await extract_invoice(
+        payload.raw_text, file_bytes=file_bytes, content_type=payload.content_type
+    )
 
 
 @router.post(

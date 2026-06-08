@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ap_invoice.core.enums import ApprovalDecision, ExtractionSource, InvoiceStatus
 from ap_invoice.schemas.common import APIModel, ORMModel
@@ -55,12 +55,26 @@ class InvoiceCreate(APIModel):
 
 
 class InvoiceIngest(APIModel):
-    """Ingest raw invoice text for the pipeline to extract and process."""
+    """Ingest an invoice (text and/or a file) for GLM OCR extraction + processing."""
 
-    raw_text: str = Field(min_length=1, description="Raw invoice text (e.g. extracted from PDF).")
+    raw_text: str | None = Field(default=None, description="Raw invoice text, if available.")
+    file_base64: str | None = Field(
+        default=None, description="Base64-encoded invoice file (image or PDF) for GLM OCR."
+    )
+    content_type: str | None = Field(
+        default=None,
+        max_length=128,
+        description="MIME type of file_base64, e.g. 'image/png' or 'application/pdf'.",
+    )
     source: str | None = Field(default="api", max_length=64)
     idempotency_key: str | None = Field(default=None, max_length=128)
     extra_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _require_text_or_file(self) -> InvoiceIngest:
+        if not (self.raw_text and self.raw_text.strip()) and not self.file_base64:
+            raise ValueError("Provide raw_text or file_base64.")
+        return self
 
 
 class InvoiceRead(ORMModel):

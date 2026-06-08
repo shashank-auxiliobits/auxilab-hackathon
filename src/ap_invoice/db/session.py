@@ -64,23 +64,8 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
     """Context manager yielding a session that commits on success, rolls back on error.
 
     Use in scripts, the MCP server, and background tasks. For FastAPI request
-    handling, use the ``get_db`` dependency instead.
-    """
-    factory = get_sessionmaker()
-    async with factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-
-
-async def get_db() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency that yields a request-scoped session.
-
-    Commit/rollback is handled here so handlers can stay declarative: the
-    session commits when the request succeeds and rolls back on any exception.
+    handling, the request-scoped session is created by the DB middleware and
+    injected via the ``get_db`` dependency (see ``api/deps.py`` and ``api/main.py``).
     """
     factory = get_sessionmaker()
     async with factory() as session:

@@ -26,6 +26,7 @@ from ap_invoice.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, str_en
 if TYPE_CHECKING:
     from ap_invoice.models.invoice import Invoice
     from ap_invoice.models.organization import Organization
+    from ap_invoice.models.policy_document import PolicyRule, VendorDocument
 
 
 class Vendor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -59,6 +60,12 @@ class Vendor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         order_by="desc(VendorPolicy.version)",
     )
     invoices: Mapped[list[Invoice]] = relationship(back_populates="vendor")
+    documents: Mapped[list[VendorDocument]] = relationship(
+        back_populates="vendor", cascade="all, delete-orphan"
+    )
+    policy_rules: Mapped[list[PolicyRule]] = relationship(
+        back_populates="vendor", cascade="all, delete-orphan"
+    )
 
     @property
     def active_policy(self) -> VendorPolicy | None:

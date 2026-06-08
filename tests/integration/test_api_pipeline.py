@@ -8,20 +8,31 @@ from httpx import AsyncClient
 pytestmark = pytest.mark.integration
 
 
+MSFT_POLICY = (
+    "Microsoft Corporation — Accounts Payable Policy.\n"
+    "Payment terms are 2/10 Net 30.\n"
+    "Invoices must not exceed $5,000.\n"
+    "All invoices must be issued in USD.\n"
+)
+
+
 async def _create_msft(client: AsyncClient, auth: dict[str, str]) -> None:
-    await client.post(
+    r = await client.post(
         "/vendors",
         headers=auth,
         json={
             "canonical_name": "Microsoft Corporation",
             "aliases": ["MSFT", "Microsoft"],
             "status": "active",
-            "policy": {
-                "payment_terms": "2/10 Net 30",
-                "auto_approve_max_amount": "5000",
-                "requires_review_above_amount": "10000",
-            },
+            "policy": {"payment_terms": "2/10 Net 30"},
         },
+    )
+    vid = r.json()["id"]
+    # Policy is the source of truth — upload it so invoices can be judged against it.
+    await client.post(
+        f"/vendors/{vid}/documents",
+        headers=auth,
+        json={"filename": "policy.txt", "text": MSFT_POLICY, "compile": False},
     )
 
 
@@ -61,11 +72,14 @@ async def test_duplicate_rejected(client: AsyncClient, auth: dict[str, str]) -> 
     assert r.json()["decision"] == "reject"
 
 
-async def test_large_invoice_held(client: AsyncClient, auth: dict[str, str]) -> None:
+async def test_large_invoice_flagged_over_policy_cap(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
     await _create_msft(client, auth)
-    big = "Microsoft\nInvoice Number: INV-BIG\nInvoice Date: 2026-06-01\nPayment Terms: Net 30\nGrand Total: $25,000.00"
+    big = "Microsoft\nInvoice Number: INV-BIG\nInvoice Date: 2026-06-01\nPayment Terms: 2/10 Net 30\nGrand Total: $25,000.00"
     r = await client.post("/invoices/process", headers=auth, json={"raw_text": big})
-    assert r.json()["decision"] == "hold"
+    # Policy states invoices must not exceed $5,000 → flagged against the policy.
+    assert r.json()["decision"] == "flag"
 
 
 async def test_unknown_vendor_held(client: AsyncClient, auth: dict[str, str]) -> None:
@@ -76,3 +90,23 @@ async def test_unknown_vendor_held(client: AsyncClient, auth: dict[str, str]) ->
     body = r.json()
     assert body["decision"] == "hold"
     assert body["vendor"]["is_recognized"] is False
+
+
+async def test_invoice_stats_counts_by_status(client: AsyncClient, auth: dict[str, str]) -> None:
+    await _create_msft(client, auth)
+    # One approved, one held (unknown vendor).
+    await client.post("/invoices/process", headers=auth, json={"raw_text": CLEAN})
+    await client.post(
+        "/invoices/process",
+        headers=auth,
+        json={
+            "raw_text": "Globex\nInvoice Number: INV-Z1\nInvoice Date: 2026-06-01\nGrand Total: $9.00"
+        },
+    )
+    stats = (await client.get("/invoices/stats", headers=auth)).json()
+    assert stats["total_invoices"] == 2
+    assert stats["by_status"]["approved"] == 1
+    assert stats["by_status"]["held"] == 1
+    # Filtered list returns only the flagged/held subset.
+    held = (await client.get("/invoices?status=held", headers=auth)).json()
+    assert held["total"] == 1
