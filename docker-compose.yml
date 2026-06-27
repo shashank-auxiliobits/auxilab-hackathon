@@ -35,8 +35,12 @@ services:
       AP_ENVIRONMENT: ${AP_ENVIRONMENT:-production}
       AP_LOG_JSON: "true"
       AP_API_KEY_PEPPER: ${AP_API_KEY_PEPPER:?set AP_API_KEY_PEPPER in your environment}
+      AP_LLM_PROVIDER: ${AP_LLM_PROVIDER:-claude}
       AP_ANTHROPIC_API_KEY: ${AP_ANTHROPIC_API_KEY:-}
+      AP_OPENAI_API_KEY: ${AP_OPENAI_API_KEY:-}
+      AP_GEMINI_API_KEY: ${AP_GEMINI_API_KEY:-}
       AP_EXTRACTOR_ENGINE: ${AP_EXTRACTOR_ENGINE:-hybrid}
+      AP_ADMIN_TOKEN: ${AP_ADMIN_TOKEN:-}
     ports:
       - "${AP_API_PORT:-8000}:8000"
     healthcheck:
@@ -60,8 +64,12 @@ services:
       AP_ENVIRONMENT: ${AP_ENVIRONMENT:-production}
       AP_LOG_JSON: "true"
       AP_API_KEY_PEPPER: ${AP_API_KEY_PEPPER:?set AP_API_KEY_PEPPER in your environment}
+      AP_LLM_PROVIDER: ${AP_LLM_PROVIDER:-claude}
       AP_ANTHROPIC_API_KEY: ${AP_ANTHROPIC_API_KEY:-}
+      AP_OPENAI_API_KEY: ${AP_OPENAI_API_KEY:-}
+      AP_GEMINI_API_KEY: ${AP_GEMINI_API_KEY:-}
       AP_EXTRACTOR_ENGINE: ${AP_EXTRACTOR_ENGINE:-hybrid}
+      AP_ADMIN_TOKEN: ${AP_ADMIN_TOKEN:-}
       AP_MCP_TRANSPORT: streamable-http
     ports:
       - "${AP_MCP_PORT:-8080}:8080"

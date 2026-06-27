@@ -27,7 +27,7 @@ from ap_invoice.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-Provider = Literal["claude", "openai"]
+Provider = Literal["claude", "openai", "gemini"]
 
 # A neutral content part is one of:
 #   {"type": "text", "text": "..."}
@@ -49,6 +49,15 @@ def _resolve(provider: Provider) -> tuple[str, str | None, str, str]:
         if not s.anthropic_api_key:
             raise LLMUnavailable("No Anthropic API key configured (AP_ANTHROPIC_API_KEY).")
         return s.anthropic_api_key, None, s.claude_model, "anthropic"
+    if provider == "gemini":
+        if not s.gemini_api_key:
+            raise LLMUnavailable("No Gemini API key configured (AP_GEMINI_API_KEY).")
+        return (
+            s.gemini_api_key,
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+            s.gemini_model,
+            "openai",
+        )
     # openai
     if not s.openai_api_key:
         raise LLMUnavailable("No OpenAI API key configured (AP_OPENAI_API_KEY).")
@@ -71,6 +80,9 @@ async def call_tool(
     settings = get_settings()
     chosen_model = model or default_model
     tokens = max_tokens or settings.extractor_max_tokens
+
+    if provider == "gemini":
+        tool_schema = _clean_schema_for_gemini(tool_schema)
 
     if backend == "anthropic":
         return await _call_anthropic(
@@ -95,6 +107,7 @@ async def call_tool(
         tool_schema=tool_schema,
         max_tokens=tokens,
         request_timeout=settings.extractor_timeout_seconds,
+        use_required_tool_choice=(provider == "gemini"),
     )
 
 
@@ -146,6 +159,7 @@ async def _call_anthropic(
         response = await client.messages.create(  # type: ignore[call-overload]
             model=model,
             max_tokens=max_tokens,
+            temperature=0.0,
             system=system,
             tools=[tool],
             tool_choice={"type": "tool", "name": tool_name},
@@ -193,6 +207,7 @@ async def _call_openai(
     tool_schema: dict[str, Any],
     max_tokens: int,
     request_timeout: float,
+    use_required_tool_choice: bool = False,
 ) -> dict[str, Any]:
     import openai
 
@@ -205,16 +220,22 @@ async def _call_openai(
             "parameters": tool_schema,
         },
     }
+    tool_choice = (
+        "required"
+        if use_required_tool_choice
+        else {"type": "function", "function": {"name": tool_name}}
+    )
     try:
         response = await client.chat.completions.create(  # type: ignore[call-overload]
             model=model,
             max_tokens=max_tokens,
+            temperature=0.0,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": _openai_content(content)},
             ],
             tools=[tool],
-            tool_choice={"type": "function", "function": {"name": tool_name}},
+            tool_choice=tool_choice,
         )
     except openai.OpenAIError as exc:
         logger.warning("llm_call_failed", backend="openai", model=model, error=str(exc))
@@ -232,3 +253,51 @@ async def _call_openai(
     except (json.JSONDecodeError, TypeError) as exc:
         raise LLMUnavailable(f"Invalid tool-call JSON: {exc}") from exc
     return parsed
+
+
+def _clean_schema_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve references and simplify Pydantic schema features that Gemini does not support."""
+    import copy
+
+    # 1. Dereference $defs and $ref
+    schema_copy = copy.deepcopy(schema)
+    defs = schema_copy.pop("$defs", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            # Strip 'default' and 'title' keywords which Gemini's validation layer rejects
+            node_clean = {k: v for k, v in node.items() if k not in ("default", "title")}
+            if "$ref" in node_clean:
+                ref_path = node_clean["$ref"]
+                ref_name = ref_path.split("/")[-1]
+                if ref_name in defs:
+                    resolved = resolve(defs[ref_name])
+                    node_copy = {k: v for k, v in node_clean.items() if k != "$ref"}
+                    return {**resolved, **node_copy}
+            return {k: resolve(v) for k, v in node_clean.items()}
+        elif isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    flat_schema = resolve(schema_copy)
+
+    # 2. Simplify anyOf nullable blocks for Gemini compatibility
+    def simplify_anyof(node: Any) -> Any:
+        if isinstance(node, dict):
+            if "anyOf" in node:
+                anyof_list = node["anyOf"]
+                non_null_type = None
+                for option in anyof_list:
+                    if isinstance(option, dict) and option.get("type") != "null":
+                        non_null_type = option
+                        break
+                if non_null_type:
+                    node_copy = {k: v for k, v in node.items() if k != "anyOf"}
+                    resolved_non_null = simplify_anyof(non_null_type)
+                    return {**resolved_non_null, **node_copy, "nullable": True}
+            return {k: simplify_anyof(v) for k, v in node.items()}
+        elif isinstance(node, list):
+            return [simplify_anyof(item) for item in node]
+        return node
+
+    return simplify_anyof(flat_schema)

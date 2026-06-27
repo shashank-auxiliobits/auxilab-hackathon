@@ -38,8 +38,10 @@ _PDF_RENDER_SCALE = 2.0  # ~144 DPI, enough for reliable OCR.
 _SYSTEM_PROMPT = (
     "You are an expert accounts-payable invoice OCR + parser. Read the invoice "
     "(text and/or images) and extract the requested fields exactly as they "
-    "appear, including any purchase order (PO) number if one is shown. Do not "
-    "invent values: if a field is absent, return null for it and "
+    "appear, including any purchase order (PO) number if one is shown. "
+    "Pay special attention to identifying the vendor (seller) name, which may "
+    "appear at the very beginning of the raw text (even inline before the 'Invoice Number' "
+    "label). Do not invent values: if a field is absent, return null for it and "
     "0.0 for its confidence. For every field, return a confidence score in [0, 1] "
     "reflecting how certain you are the value is correct. Dates must be ISO-8601 "
     "(YYYY-MM-DD). Amounts must be plain numbers without currency symbols or "
@@ -72,14 +74,15 @@ class _FieldConfidence(BaseModel):
     grand_total: float = 0.0
     payment_terms: float = 0.0
     line_items: float = 0.0
+    notes: float = 0.0
 
 
 class _LLMExtraction(BaseModel):
     """Schema the model is constrained to return."""
 
-    invoice_number: str | None = None
+    invoice_number: str | None = Field(default=None, description="The invoice number or ID.")
     po_number: str | None = Field(default=None, description="Purchase order number, if present.")
-    vendor_name: str | None = None
+    vendor_name: str | None = Field(default=None, description="The name of the vendor/seller issuing the invoice (e.g. AWS, Microsoft, Acme).")
     invoice_date: date | None = None
     due_date: date | None = None
     currency: str | None = Field(default=None, description="ISO-4217 code, e.g. USD")
@@ -88,6 +91,7 @@ class _LLMExtraction(BaseModel):
     tax: float | None = None
     grand_total: float | None = None
     payment_terms: str | None = None
+    notes: str | None = Field(default=None, description="Any notes, memo, project codes, or additional text on the invoice.")
     confidence: _FieldConfidence = Field(default_factory=_FieldConfidence)
 
 
@@ -209,5 +213,5 @@ def _to_extracted_invoice(parsed: _LLMExtraction) -> ExtractedInvoice:
         payment_terms=parsed.payment_terms,
         confidence=confidence,
         source=ExtractionSource.OCR,
-        notes=[],
+        notes=[parsed.notes] if parsed.notes else [],
     )

@@ -109,12 +109,17 @@ def _verdict(
 
 def _meta(decided_by: str, chunk_ids: list[str]) -> dict[str, Any]:
     settings = get_settings()
+    if settings.llm_provider == "claude":
+        model = settings.claude_model
+    elif settings.llm_provider == "gemini":
+        model = settings.gemini_model
+    else:
+        model = settings.openai_model
+
     return {
         "decided_by": decided_by,
         "provider": settings.llm_provider,
-        "model": settings.claude_model
-        if settings.llm_provider == "claude"
-        else settings.openai_model,
+        "model": model,
         "retrieved_chunk_ids": chunk_ids,
     }
 

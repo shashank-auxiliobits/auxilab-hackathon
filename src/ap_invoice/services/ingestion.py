@@ -62,6 +62,8 @@ def invoice_from_extracted(
     metadata = dict(extra_metadata or {})
     if extracted.po_number and not metadata.get("po_number"):
         metadata["po_number"] = extracted.po_number
+    if extracted.notes and not metadata.get("notes"):
+        metadata["notes"] = extracted.notes
     invoice = Invoice(
         organization_id=org_id,
         raw_vendor_name=extracted.vendor_name,
