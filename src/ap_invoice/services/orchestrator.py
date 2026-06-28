@@ -311,6 +311,7 @@ async def process_invoice(
     decision_fields = _invoice_fields(invoice, canonical_vendor_name)
     decision_fields["po_number"] = invoice.extra_metadata.get("po_number")
     decision_fields["has_purchase_order"] = bool(invoice.extra_metadata.get("po_number"))
+    decision_fields["notes"] = invoice.extra_metadata.get("notes", [])
     decision_fields["line_items"] = [
         {
             "description": li.description,

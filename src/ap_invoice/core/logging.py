@@ -20,9 +20,12 @@ def configure_logging() -> None:
     settings = get_settings()
     level = getattr(logging, settings.log_level)
 
+    # In stdio MCP transport, stdout is reserved for JSON-RPC. Redirect all logs to stderr.
+    log_stream = sys.stderr if settings.mcp_transport == "stdio" else sys.stdout
+
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stdout,
+        stream=log_stream,
         level=level,
     )
 
@@ -43,7 +46,7 @@ def configure_logging() -> None:
     structlog.configure(
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.PrintLoggerFactory(file=log_stream),
         cache_logger_on_first_use=True,
     )
 

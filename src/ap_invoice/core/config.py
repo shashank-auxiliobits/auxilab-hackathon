@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # A single multimodal provider handles BOTH stages: invoice extraction
     # (vision over images/PDFs) and the RAG + approval decision. Choose Claude
     # or GPT; the same model is used for both.
-    llm_provider: Literal["claude", "openai"] = "claude"
+    llm_provider: Literal["claude", "openai", "gemini"] = "claude"
 
     # Claude (Anthropic SDK) — vision + text capable.
     anthropic_api_key: str | None = None
@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     openai_model: str = "gpt-4o"
+
+    # Gemini (Google GenAI via OpenAI Compatibility API).
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
 
     # Shared LLM call limits (extraction + decision).
     extractor_max_tokens: int = 4096
@@ -134,6 +138,8 @@ class Settings(BaseSettings):
         """The configured provider has the credentials it needs (extraction + decision)."""
         if self.llm_provider == "claude":
             return bool(self.anthropic_api_key)
+        elif self.llm_provider == "gemini":
+            return bool(self.gemini_api_key)
         return bool(self.openai_api_key)
 
 
