@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query, status
 from sqlalchemy import delete, select
 
 from ap_invoice.api.deps import CurrentOrg, DBSession
-from ap_invoice.api.errors import NotFoundError
+from ap_invoice.api.errors import NotFoundError, ValidationError
 from ap_invoice.core.enums import PolicyRuleStatus
 from ap_invoice.models.policy_document import PolicyRule, VendorDocument
 from ap_invoice.models.vendor import Vendor
@@ -22,6 +22,7 @@ from ap_invoice.schemas.policy_document import (
 )
 from ap_invoice.services import rag
 from ap_invoice.services.policy_compiler import compile_document
+from ap_invoice.services.policy_guardrails import screen_policy_text
 
 router = APIRouter(prefix="/vendors/{vendor_id}", tags=["policy documents"])
 
@@ -51,6 +52,18 @@ async def upload_document(
     vendor_id: uuid.UUID, payload: DocumentUpload, org: CurrentOrg, db: DBSession
 ) -> DocumentCompileResult:
     await _get_vendor(db, org.id, vendor_id)
+
+    # Guardrail: the policy becomes the decision LLM's source of truth, so reject
+    # text that looks like instructions to the model (prompt injection) before it
+    # is ever stored or embedded.
+    if reasons := screen_policy_text(payload.text):
+        raise ValidationError(
+            "Policy rejected: the text contains content that looks like instructions "
+            "to the AI rather than business rules (possible prompt injection): "
+            + "; ".join(reasons)
+            + ". Remove this and re-upload."
+        )
+
     if payload.replace:
         await _clear_vendor_policy(db, vendor_id)
     document = VendorDocument(

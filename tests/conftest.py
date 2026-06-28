@@ -107,13 +107,6 @@ def _fake_ocr(content: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _grab(text: str, prefix: str) -> str | None:
-    for line in text.splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix) :].strip()
-    return None
-
-
 def _norm_terms(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower()) if value else ""
 
@@ -129,9 +122,12 @@ def _fake_decision(content: list[dict[str, Any]]) -> dict[str, Any]:
     from ap_invoice.services.policy_compiler import _compile_deterministic
 
     text = "\n".join(p["text"] for p in content if p.get("type") == "text")
-    # Policy text sits between its header and the INVOICE FIELDS line.
-    policy_text = text.split("INVOICE FIELDS:", 1)[0].split("source of truth):", 1)[-1]
-    fields = json.loads(_grab(text, "INVOICE FIELDS: ") or "{}")
+
+    def _between(start: str, end: str) -> str:
+        return text.split(start, 1)[-1].split(end, 1)[0] if start in text else ""
+
+    policy_text = _between("<vendor_policy>", "</vendor_policy>")
+    fields = json.loads(_between("<invoice_fields>", "</invoice_fields>") or "{}")
     rules = _compile_deterministic(policy_text)
 
     def _as_float(value: Any) -> float | None:
