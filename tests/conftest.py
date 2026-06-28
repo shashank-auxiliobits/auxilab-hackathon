@@ -16,7 +16,8 @@ from typing import Any
 
 os.environ.setdefault("AP_ENVIRONMENT", "test")
 os.environ.setdefault("AP_API_KEY_PEPPER", "test-pepper-for-pytest-only")
-os.environ.setdefault("AP_ADMIN_TOKEN", "test-admin-token")
+os.environ.setdefault("AP_JWT_SECRET", "test-jwt-secret-for-pytest-only-0123456789")
+os.environ.setdefault("AP_EMAIL_BACKEND", "console")
 os.environ.setdefault("AP_LOG_JSON", "false")
 os.environ.setdefault(
     "AP_DATABASE_URL",
@@ -143,11 +144,18 @@ def _fake_decision(content: list[dict[str, Any]]) -> dict[str, Any]:
 
     violations: list[str] = []
     for r in rules:
-        if r.rule_type == "max_invoice_amount" and amount is not None and r.amount and amount > r.amount:
+        if (
+            r.rule_type == "max_invoice_amount"
+            and amount is not None
+            and r.amount
+            and amount > r.amount
+        ):
             violations.append(f"Amount {amount} exceeds policy cap {r.amount}.")
         elif r.rule_type == "requires_purchase_order" and not has_po:
             violations.append("Policy requires a purchase order; none present.")
-        elif r.rule_type == "currency" and currency and r.currency and currency != r.currency.upper():
+        elif (
+            r.rule_type == "currency" and currency and r.currency and currency != r.currency.upper()
+        ):
             violations.append(f"Currency {currency} differs from policy currency {r.currency}.")
         elif r.rule_type == "allowed_payment_terms" and terms and r.payment_terms:
             allowed = {_norm_terms(t) for t in r.payment_terms}
@@ -159,11 +167,18 @@ def _fake_decision(content: list[dict[str, Any]]) -> dict[str, Any]:
     else:
         decision, summary, reasons = "auto_approve", "Auto-approved: complies with policy.", []
 
-    return {"decision": decision, "confidence": 0.9, "summary": summary,
-            "reasons": reasons, "checks": []}
+    return {
+        "decision": decision,
+        "confidence": 0.9,
+        "summary": summary,
+        "reasons": reasons,
+        "checks": [],
+    }
 
 
-async def _fake_call_tool(*, tool_name: str, content: list[dict[str, Any]], **_: Any) -> dict[str, Any]:
+async def _fake_call_tool(
+    *, tool_name: str, content: list[dict[str, Any]], **_: Any
+) -> dict[str, Any]:
     if tool_name == "record_invoice_fields":
         return _fake_ocr(content)
     if tool_name == "record_invoice_decision":

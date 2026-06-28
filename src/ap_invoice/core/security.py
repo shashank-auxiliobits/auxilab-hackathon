@@ -67,3 +67,44 @@ def verify_secret(secret: str, key_hash: str) -> bool:
 def needs_rehash(key_hash: str) -> bool:
     """Whether a stored hash should be upgraded to current Argon2 parameters."""
     return _hasher.check_needs_rehash(key_hash)
+
+
+# --------------------------------------------------------------------------- #
+# Passwords (user login) and email OTPs — same Argon2 + pepper as API keys.
+# --------------------------------------------------------------------------- #
+
+
+def hash_password(password: str) -> str:
+    """Hash a user password (Argon2, peppered) for storage."""
+    return _hasher.hash(_peppered(password))
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Constant-time verification of a password against its stored hash."""
+    try:
+        return _hasher.verify(password_hash, _peppered(password))
+    except VerifyMismatchError:
+        return False
+    except Exception:
+        return False
+
+
+def generate_otp(length: int) -> str:
+    """Generate a numeric one-time passcode of ``length`` digits (zero-padded)."""
+    upper = 10**length
+    return str(secrets.randbelow(upper)).zfill(length)
+
+
+def hash_otp(code: str) -> str:
+    """Hash an OTP for storage (never store the plaintext code)."""
+    return _hasher.hash(_peppered(code))
+
+
+def verify_otp(code: str, code_hash: str) -> bool:
+    """Constant-time verification of a presented OTP against its stored hash."""
+    try:
+        return _hasher.verify(code_hash, _peppered(code))
+    except VerifyMismatchError:
+        return False
+    except Exception:
+        return False

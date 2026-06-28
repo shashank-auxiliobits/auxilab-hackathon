@@ -42,6 +42,13 @@ class ValidationError(APIError):
     code = "validation_error"
 
 
+class ServiceUnavailableError(APIError):
+    """An upstream dependency (e.g. the LLM provider) is unavailable."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "service_unavailable"
+
+
 def _error_body(code: str, detail: str) -> dict[str, dict[str, str]]:
     return {"error": {"code": code, "detail": detail}}
 

@@ -18,6 +18,7 @@ offline fallback.
 from __future__ import annotations
 
 import base64
+from collections.abc import Sequence
 from datetime import date
 
 from pydantic import BaseModel, Field, ValidationError
@@ -27,6 +28,7 @@ from ap_invoice.core.enums import ExtractionSource
 from ap_invoice.core.logging import get_logger
 from ap_invoice.schemas.tools import ExtractedInvoice, ExtractedLineItem
 from ap_invoice.services._parsing import parse_money
+from ap_invoice.services.extraction.files import InputFile, InvalidFileError
 from ap_invoice.services.llm import LLMUnavailable, call_tool
 
 logger = get_logger(__name__)
@@ -82,7 +84,10 @@ class _LLMExtraction(BaseModel):
 
     invoice_number: str | None = Field(default=None, description="The invoice number or ID.")
     po_number: str | None = Field(default=None, description="Purchase order number, if present.")
-    vendor_name: str | None = Field(default=None, description="The name of the vendor/seller issuing the invoice (e.g. AWS, Microsoft, Acme).")
+    vendor_name: str | None = Field(
+        default=None,
+        description="The vendor/seller name issuing the invoice (e.g. AWS, Microsoft, Acme).",
+    )
     invoice_date: date | None = None
     due_date: date | None = None
     currency: str | None = Field(default=None, description="ISO-4217 code, e.g. USD")
@@ -91,20 +96,26 @@ class _LLMExtraction(BaseModel):
     tax: float | None = None
     grand_total: float | None = None
     payment_terms: str | None = None
-    notes: str | None = Field(default=None, description="Any notes, memo, project codes, or additional text on the invoice.")
+    notes: str | None = Field(
+        default=None,
+        description="Any notes, memo, project codes, or additional text on the invoice.",
+    )
     confidence: _FieldConfidence = Field(default_factory=_FieldConfidence)
 
 
-def _pdf_to_image_parts(file_bytes: bytes) -> list[dict[str, str]]:
-    """Rasterise PDF pages to PNG image content parts."""
+def _pdf_to_image_parts(file_bytes: bytes, max_pages: int) -> list[dict[str, str]]:
+    """Rasterise up to ``max_pages`` PDF pages to PNG image content parts."""
     from io import BytesIO
 
     import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
-    pdf = pdfium.PdfDocument(file_bytes)
+    try:
+        pdf = pdfium.PdfDocument(file_bytes)
+    except pdfium.PdfiumError as exc:
+        raise InvalidFileError(f"Could not open PDF: {exc}") from exc
     try:
         parts: list[dict[str, str]] = []
-        for i in range(min(len(pdf), _MAX_PDF_PAGES)):
+        for i in range(min(len(pdf), max_pages)):
             bitmap = pdf[i].render(scale=_PDF_RENDER_SCALE)
             buf = BytesIO()
             bitmap.to_pil().save(buf, format="PNG")
@@ -120,51 +131,79 @@ def _pdf_to_image_parts(file_bytes: bytes) -> list[dict[str, str]]:
         pdf.close()
 
 
-def _build_content(
-    raw_text: str | None, file_bytes: bytes | None, content_type: str | None
-) -> list[dict[str, str]]:
-    """Turn the available input into neutral content parts for the LLM layer."""
-    instruction = {"type": "text", "text": "Extract the invoice fields from this invoice."}
+def _file_to_image_parts(file: InputFile, budget: int) -> list[dict[str, str]]:
+    """Turn one decoded file into image content parts, sending at most ``budget`` images."""
+    ctype = (file.content_type or "").lower()
+    if "pdf" in ctype:
+        parts = _pdf_to_image_parts(file.data, max_pages=min(_MAX_PDF_PAGES, budget))
+        if not parts:
+            raise InvalidFileError("PDF contained no rasterisable pages.")
+        return parts
+    if ctype.startswith("image/"):
+        return [
+            {
+                "type": "image",
+                "media_type": ctype,
+                "data": base64.b64encode(file.data).decode(),
+            }
+        ]
+    raise InvalidFileError(
+        f"Unsupported file type for OCR: {file.content_type!r}. "
+        "Provide an image (image/png, image/jpeg, …) or application/pdf."
+    )
 
-    if file_bytes:
-        ctype = (content_type or "").lower()
-        if "pdf" in ctype:
-            image_parts = _pdf_to_image_parts(file_bytes)
-            if not image_parts:
-                raise ExtractionUnavailable("PDF contained no rasterisable pages.")
-            return [instruction, *image_parts]
-        if ctype.startswith("image/"):
-            return [
-                instruction,
-                {
-                    "type": "image",
-                    "media_type": ctype,
-                    "data": base64.b64encode(file_bytes).decode(),
-                },
-            ]
-        raise ExtractionUnavailable(f"Unsupported content type for OCR: {content_type!r}.")
+
+def _build_content(raw_text: str | None, files: Sequence[InputFile]) -> list[dict[str, str]]:
+    """Turn the available text and/or files into neutral content parts for the LLM.
+
+    Text and files combine: when both are supplied they are sent together so the
+    model sees every page/attachment of one logical invoice. PDF pages and images
+    are capped collectively at ``AP_MAX_EXTRACTION_IMAGES`` to bound cost.
+    """
+    content: list[dict[str, str]] = [
+        {"type": "text", "text": "Extract the invoice fields from this invoice."}
+    ]
 
     if raw_text and raw_text.strip():
-        prompt = f"Extract the invoice fields from this text:\n\n{raw_text}"
-        return [{"type": "text", "text": prompt}]
+        content.append({"type": "text", "text": f"Invoice text:\n\n{raw_text}"})
 
-    raise ExtractionUnavailable("No invoice text or file provided for extraction.")
+    budget = get_settings().max_extraction_images
+    for file in files:
+        if budget <= 0:
+            logger.warning("extraction_image_cap_reached", cap=get_settings().max_extraction_images)
+            break
+        parts = _file_to_image_parts(file, budget)
+        content.extend(parts)
+        budget -= len(parts)
+
+    # Only the instruction line means no usable input was supplied.
+    if len(content) == 1:
+        raise InvalidFileError("No invoice text or files provided for extraction.")
+
+    return content
 
 
 async def extract_with_vision(
     *,
     raw_text: str | None = None,
+    files: Sequence[InputFile] | None = None,
     file_bytes: bytes | None = None,
     content_type: str | None = None,
 ) -> ExtractedInvoice:
-    """Extract invoice fields via the configured LLM. Raises :class:`ExtractionUnavailable`."""
+    """Extract invoice fields via the configured LLM from text and/or one or more files.
+
+    Raises :class:`ExtractionUnavailable` if the provider is unavailable, or
+    :class:`~ap_invoice.services.extraction.files.InvalidFileError` for bad input.
+    """
     settings = get_settings()
     if not settings.llm_available:
-        raise ExtractionUnavailable(
-            f"LLM provider '{settings.llm_provider}' is not configured."
-        )
+        raise ExtractionUnavailable(f"LLM provider '{settings.llm_provider}' is not configured.")
 
-    content = _build_content(raw_text, file_bytes, content_type)
+    all_files = list(files or [])
+    if file_bytes is not None:
+        # Back-compat: a single raw bytes file is treated as the first file.
+        all_files.insert(0, InputFile(data=file_bytes, content_type=content_type))
+    content = _build_content(raw_text, all_files)
 
     try:
         tool_input = await call_tool(

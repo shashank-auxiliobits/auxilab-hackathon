@@ -8,7 +8,6 @@ scoped to the authenticated organization.
 
 from __future__ import annotations
 
-import base64
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -29,6 +28,7 @@ from ap_invoice.models.vendor import Vendor
 from ap_invoice.schemas.tools import (
     CompletenessRequest,
     DuplicateCheckRequest,
+    ExtractedInvoice,
     PaymentTermsRequest,
     VendorMasterEntry,
     VendorNormaliseRequest,
@@ -41,6 +41,12 @@ from ap_invoice.services import (
     normalise_vendor,
 )
 from ap_invoice.services.auth import authenticate_api_key
+from ap_invoice.services.extraction import (
+    ExtractionUnavailable,
+    InvalidFileError,
+    collect_specs,
+    decode_files,
+)
 from ap_invoice.services.ingestion import find_by_idempotency, invoice_from_extracted
 from ap_invoice.services.orchestrator import process_invoice
 from ap_invoice.services.reporting import invoice_status_counts, invoice_totals
@@ -61,6 +67,22 @@ _INSTRUCTIONS = (
 )
 
 _DUP_CANDIDATE_LIMIT = 1000
+
+
+async def _extract(
+    raw_text: str | None,
+    file_base64: str | None,
+    content_type: str | None,
+    files: list[dict[str, Any]] | None,
+) -> ExtractedInvoice:
+    """Decode file(s) and run extraction, surfacing bad input / outages as ToolError."""
+    try:
+        decoded = decode_files(collect_specs(file_base64, content_type, files))
+        return await extract_invoice(raw_text, files=decoded)
+    except InvalidFileError as exc:
+        raise ToolError(str(exc)) from exc
+    except ExtractionUnavailable as exc:
+        raise ToolError(f"Invoice extraction is unavailable: {exc}") from exc
 
 
 def _token_from_ctx(ctx: Ctx | None) -> str | None:
@@ -114,21 +136,21 @@ def build_server() -> FastMCP:
         raw_text: str | None = None,
         file_base64: str | None = None,
         content_type: str | None = None,
+        files: list[dict[str, Any]] | None = None,
         ctx: Ctx | None = None,
     ) -> dict[str, Any]:
-        """Invoice Field Extractor (GLM OCR).
+        """Invoice Field Extractor (vision OCR).
 
         Parse an invoice into structured fields (invoice number, vendor, dates,
         line items, subtotal, tax, grand total) with a confidence score per
-        field. Accepts ``raw_text`` and/or a base64 file (``file_base64`` +
-        ``content_type``, e.g. 'image/png' or 'application/pdf') for scanned
-        copies and photos. Extraction always runs through the GLM vision model.
+        field. Accepts ``raw_text`` and/or files for scanned copies and photos:
+        a single file via ``file_base64`` + ``content_type`` (e.g. 'image/png' or
+        'application/pdf'), or several pages/attachments via ``files`` — a list of
+        ``{"file_base64": ..., "content_type": ..., "filename": ...}`` extracted
+        together as one invoice. Extraction always runs through the vision model.
         """
-        file_bytes = base64.b64decode(file_base64) if file_base64 else None
         async with _org_session(ctx):
-            result = await extract_invoice(
-                raw_text, file_bytes=file_bytes, content_type=content_type
-            )
+            result = await _extract(raw_text, file_base64, content_type, files)
         return result.model_dump(mode="json")
 
     @mcp.tool()
@@ -261,6 +283,7 @@ def build_server() -> FastMCP:
         raw_text: str | None = None,
         file_base64: str | None = None,
         content_type: str | None = None,
+        files: list[dict[str, Any]] | None = None,
         actor: str = "agent",
         idempotency_key: str | None = None,
         source: str = "agent",
@@ -269,17 +292,18 @@ def build_server() -> FastMCP:
     ) -> dict[str, Any]:
         """Process an invoice end-to-end and persist the decision + audit trail.
 
-        Extracts fields via GLM OCR (from ``raw_text`` and/or a base64 file —
-        ``file_base64`` + ``content_type`` for scanned copies, PDFs, or photos),
-        resolves the vendor, checks completeness and duplicates, computes payment
-        terms, then has the decision LLM judge the invoice against the vendor's
-        policy (retrieved from the RAG) and records the verdict (auto_approve /
-        hold / flag / reject) with confidence and a full audit trail. With
-        ``auto_onboard`` (default true), an unrecognised vendor is auto-created
-        as 'onboarding' so processing doesn't halt — the invoice still holds for
-        review until the vendor is trusted. The primary action for automation.
+        Extracts fields via vision OCR (from ``raw_text`` and/or files — a single
+        file via ``file_base64`` + ``content_type``, or several pages/attachments
+        via ``files`` as a list of ``{"file_base64", "content_type", "filename"}``
+        extracted together as one invoice), resolves the vendor, checks
+        completeness and duplicates, computes payment terms, then has the decision
+        LLM judge the invoice against the vendor's policy (retrieved from the RAG)
+        and records the verdict (auto_approve / hold / flag / reject) with
+        confidence and a full audit trail. With ``auto_onboard`` (default true),
+        an unrecognised vendor is auto-created as 'onboarding' so processing
+        doesn't halt — the invoice still holds for review until the vendor is
+        trusted. The primary action for automation.
         """
-        file_bytes = base64.b64decode(file_base64) if file_base64 else None
         async with _org_session(ctx) as (org, db):
             existing = await find_by_idempotency(db, org.id, idempotency_key)
             if existing is not None:
@@ -287,9 +311,7 @@ def build_server() -> FastMCP:
                     db, org, existing, actor=actor, auto_onboard=auto_onboard
                 )
                 return result.model_dump(mode="json")
-            extracted = await extract_invoice(
-                raw_text, file_bytes=file_bytes, content_type=content_type
-            )
+            extracted = await _extract(raw_text, file_base64, content_type, files)
             invoice = invoice_from_extracted(
                 org.id,
                 extracted,

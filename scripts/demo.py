@@ -13,17 +13,21 @@ It provisions a fresh organization and a vendor, then demonstrates that the
 * exact duplicate          → rejected by the DB guardrail
 
 Uses the configured LLM (Claude/GPT) for extraction + decisions, so it needs a
-provider key in .env. Uses the admin token and port from your settings/.env.
+provider key in .env. Provisions its own org + API key directly in the database.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import uuid
 
 import httpx
 
 from ap_invoice.core.config import get_settings
+from ap_invoice.core.security import generate_api_key
+from ap_invoice.db.session import dispose_engine, session_scope
+from ap_invoice.models.organization import ApiKey, Organization
 
 POLICY_V1 = """ACME SUPPLY CO — VENDOR POLICY (v1)
 Payment terms are Net 30.
@@ -65,14 +69,33 @@ UNKNOWN = (
 )
 
 
+async def _provision_org_key() -> str:
+    """Create a fresh org + API key directly in the DB; return the plaintext key."""
+    async with session_scope() as db:
+        org = Organization(name="Demo Co", slug=f"demo-{uuid.uuid4().hex[:8]}")
+        db.add(org)
+        await db.flush()
+        generated = generate_api_key()
+        db.add(
+            ApiKey(
+                organization_id=org.id,
+                name="demo",
+                prefix=generated.prefix,
+                key_hash=generated.key_hash,
+            )
+        )
+        await db.flush()
+    await dispose_engine()
+    return generated.full_key
+
+
 def main() -> None:
     settings = get_settings()
     base = f"http://127.0.0.1:{settings.api_port}"
-    if not settings.admin_token:
-        sys.exit("AP_ADMIN_TOKEN is not set. Run scripts/setup.sh or set it in .env.")
+    if settings.is_production:
+        sys.exit("scripts/demo.py uses sample data; do not run it against production.")
     if not settings.llm_available:
         sys.exit(f"LLM provider '{settings.llm_provider}' is not configured in .env.")
-    admin = {"X-Admin-Token": settings.admin_token}
 
     with httpx.Client(base_url=base, timeout=120) as c:
         try:
@@ -82,15 +105,8 @@ def main() -> None:
 
         print(f"\nAP Invoice Intelligence — policy-as-source-of-truth demo ({base})\n" + "=" * 64)
 
-        # 1. Provision org + key
-        org = c.post(
-            "/admin/organizations",
-            headers=admin,
-            json={"name": "Demo Co", "slug": f"demo-{uuid.uuid4().hex[:8]}"},
-        ).json()
-        key = c.post(
-            f"/admin/organizations/{org['id']}/api-keys", headers=admin, json={"name": "demo"}
-        ).json()["api_key"]
+        # 1. Provision org + key (directly in the DB; no admin endpoint)
+        key = asyncio.run(_provision_org_key())
         auth = {"Authorization": f"Bearer {key}"}
         print(f"1. org + API key created  ({key.split('.')[0]}…)")
 

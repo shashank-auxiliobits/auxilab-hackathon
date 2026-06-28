@@ -41,7 +41,11 @@ def _run(**overrides):
     base = {
         "vendor_id": uuid.uuid4(),
         "vendor_name": "Acme",
-        "fields": {"grand_total": Decimal("100.00"), "currency": "USD", "has_purchase_order": False},
+        "fields": {
+            "grand_total": Decimal("100.00"),
+            "currency": "USD",
+            "has_purchase_order": False,
+        },
         "duplicates": None,
     }
     base.update(overrides)

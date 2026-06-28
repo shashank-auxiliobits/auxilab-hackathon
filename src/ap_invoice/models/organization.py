@@ -13,6 +13,7 @@ from ap_invoice.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from ap_invoice.models.invoice import Invoice
+    from ap_invoice.models.user import User
     from ap_invoice.models.vendor import Vendor
 
 
@@ -26,6 +27,10 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     api_keys: Mapped[list[ApiKey]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    users: Mapped[list[User]] = relationship(
         back_populates="organization",
         cascade="all, delete-orphan",
     )

@@ -10,7 +10,10 @@ from typing import Any
 from pydantic import Field, model_validator
 
 from ap_invoice.core.enums import ApprovalDecision, ExtractionSource, InvoiceStatus
-from ap_invoice.schemas.common import APIModel, ORMModel
+from ap_invoice.schemas.common import APIModel, InvoiceFileInput, ORMModel
+
+# Hard upper bound on files per request (see schemas.processing for rationale).
+_MAX_FILES_PER_REQUEST = 50
 
 
 class LineItemIn(APIModel):
@@ -59,12 +62,20 @@ class InvoiceIngest(APIModel):
 
     raw_text: str | None = Field(default=None, description="Raw invoice text, if available.")
     file_base64: str | None = Field(
-        default=None, description="Base64-encoded invoice file (image or PDF) for GLM OCR."
+        default=None,
+        description="Base64-encoded invoice file (image or PDF). For a single file; "
+        "for multi-page or multi-file invoices use `files` instead (or in addition).",
     )
     content_type: str | None = Field(
         default=None,
         max_length=128,
         description="MIME type of file_base64, e.g. 'image/png' or 'application/pdf'.",
+    )
+    files: list[InvoiceFileInput] = Field(
+        default_factory=list,
+        max_length=_MAX_FILES_PER_REQUEST,
+        description="One or more invoice files (pages or attachments) extracted together "
+        "as a single invoice. Combined with `file_base64` if both are provided.",
     )
     source: str | None = Field(default="api", max_length=64)
     idempotency_key: str | None = Field(default=None, max_length=128)
@@ -72,8 +83,9 @@ class InvoiceIngest(APIModel):
 
     @model_validator(mode="after")
     def _require_text_or_file(self) -> InvoiceIngest:
-        if not (self.raw_text and self.raw_text.strip()) and not self.file_base64:
-            raise ValueError("Provide raw_text or file_base64.")
+        has_text = bool(self.raw_text and self.raw_text.strip())
+        if not has_text and not self.file_base64 and not self.files:
+            raise ValueError("Provide raw_text, file_base64, or files.")
         return self
 
 

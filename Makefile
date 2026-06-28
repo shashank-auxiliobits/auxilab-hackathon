@@ -26,8 +26,8 @@ db-logs: ## Tail Postgres logs
 migrate: ## Apply all migrations to head
 	$(UV) run alembic upgrade head
 
-seed: ## Seed a demo org, API key, and vendor (prints the API key)
-	$(UV) run python scripts/seed.py
+seed: ## Bootstrap the first owner account + API key (usage: make seed EMAIL=you@example.com)
+	$(UV) run python scripts/seed.py --email "$(EMAIL)"
 
 demo: ## Run the local end-to-end demo against a running API (needs: make run-api)
 	$(UV) run python scripts/demo.py

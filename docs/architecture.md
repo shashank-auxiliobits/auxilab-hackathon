@@ -20,8 +20,8 @@ to the same pure service layer and deterministic policy engine.
                 └───────────────┬───────────────────────────────┘
                                 │
    Systems  ───►┌───────────────┴───────────────────────────────┐
-   & admins     │  REST API (FastAPI)                            │
-                │   /admin /vendors /invoices /tools /health     │
+   & users      │  REST API (FastAPI)                            │
+                │ /auth /api-keys /vendors /invoices /tools /health │
                 └───────────────┬───────────────────────────────┘
                                 │  shared
                 ┌───────────────┴───────────────────────────────┐

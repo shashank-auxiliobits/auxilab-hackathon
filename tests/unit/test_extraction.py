@@ -16,7 +16,7 @@ from io import BytesIO
 import pytest
 
 from ap_invoice.core.enums import ExtractionSource
-from ap_invoice.services.extraction import ExtractionUnavailable, extract_invoice
+from ap_invoice.services.extraction import InvalidFileError, extract_invoice
 from ap_invoice.services.extraction.ocr import _pdf_to_image_parts, extract_with_vision
 
 SAMPLE = """ACME WIDGETS LLC
@@ -47,12 +47,12 @@ def test_extract_with_vision_text_path() -> None:
 
 
 def test_no_input_raises() -> None:
-    with pytest.raises(ExtractionUnavailable):
+    with pytest.raises(InvalidFileError):
         asyncio.run(extract_invoice())
 
 
 def test_unsupported_content_type_raises() -> None:
-    with pytest.raises(ExtractionUnavailable):
+    with pytest.raises(InvalidFileError):
         asyncio.run(extract_invoice(file_bytes=b"x", content_type="application/zip"))
 
 
@@ -67,7 +67,7 @@ def _one_page_pdf() -> bytes:
 
 
 def test_pdf_rasterises_to_image_parts() -> None:
-    parts = _pdf_to_image_parts(_one_page_pdf())
+    parts = _pdf_to_image_parts(_one_page_pdf(), max_pages=8)
     assert parts and parts[0]["media_type"] == "image/png"
     # The base64 payload decodes to a PNG (starts with the PNG magic bytes).
     assert base64.b64decode(parts[0]["data"]).startswith(b"\x89PNG")

@@ -116,7 +116,9 @@ async def test_replace_policy_uses_updated_data(client: AsyncClient, auth: dict[
         headers=auth,
         json={"filename": "p.txt", "text": CAP_5K, "compile": False},
     )
-    r1 = await client.post("/invoices/process", headers=auth, json={"raw_text": BIG.format(n="INV-R1")})
+    r1 = await client.post(
+        "/invoices/process", headers=auth, json={"raw_text": BIG.format(n="INV-R1")}
+    )
     assert r1.json()["decision"] == "flag"
 
     # Update (replace) the policy → $50,000 cap. The same $9,000 invoice now approves.
@@ -125,7 +127,9 @@ async def test_replace_policy_uses_updated_data(client: AsyncClient, auth: dict[
         headers=auth,
         json={"filename": "p2.txt", "text": CAP_50K, "compile": False, "replace": True},
     )
-    r2 = await client.post("/invoices/process", headers=auth, json={"raw_text": BIG.format(n="INV-R2")})
+    r2 = await client.post(
+        "/invoices/process", headers=auth, json={"raw_text": BIG.format(n="INV-R2")}
+    )
     assert r2.json()["decision"] == "auto_approve"
 
 
@@ -142,7 +146,9 @@ async def test_delete_document_reverts_to_hold(client: AsyncClient, auth: dict[s
     d = await client.delete(f"/vendors/{vid}/documents/{doc_id}", headers=auth)
     assert d.status_code == 204
     assert (await client.get(f"/vendors/{vid}/documents", headers=auth)).json() == []
-    r = await client.post("/invoices/process", headers=auth, json={"raw_text": BIG.format(n="INV-D1")})
+    r = await client.post(
+        "/invoices/process", headers=auth, json={"raw_text": BIG.format(n="INV-D1")}
+    )
     assert r.json()["decision"] == "hold"
 
 

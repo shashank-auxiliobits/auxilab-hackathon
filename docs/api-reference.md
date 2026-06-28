@@ -5,18 +5,16 @@ Base URL: `http://localhost:8000`. Interactive OpenAPI docs are served at
 
 ## Authentication
 
-Most endpoints require an **organization API key** sent as a bearer token:
+Tenant endpoints accept **either** a session token (JWT, from login) **or** an
+**organization API key**, sent as a bearer token:
 
 ```
-Authorization: Bearer ap_<prefix>.<secret>
+Authorization: Bearer <jwt-or-api-key>
 ```
 
-(`X-API-Key: <key>` is also accepted.) Provisioning endpoints under `/admin`
-require the **admin token** instead:
-
-```
-X-Admin-Token: <AP_ADMIN_TOKEN>
-```
+(`X-API-Key: <key>` is also accepted for API keys.) Humans get a session token by
+registering and verifying their email; programmatic / MCP clients use an API key
+that a logged-in user mints at `POST /api-keys`. There is no admin token.
 
 Errors use a consistent envelope:
 
@@ -30,14 +28,21 @@ Errors use a consistent envelope:
 | GET | `/health/live` | none | liveness |
 | GET | `/health/ready` | none | readiness (checks DB) |
 
-## Admin (admin token)
+## Auth (public)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/admin/organizations` | create an organization |
-| GET | `/admin/organizations` | list organizations |
-| POST | `/admin/organizations/{org_id}/api-keys` | issue a key (plaintext returned once) |
-| GET | `/admin/organizations/{org_id}/api-keys` | list keys (metadata only) |
-| DELETE | `/admin/organizations/{org_id}/api-keys/{key_id}` | revoke a key |
+| POST | `/auth/register` | create an account (org + owner); emails an OTP |
+| POST | `/auth/verify` | verify the email with its OTP → returns a session token |
+| POST | `/auth/resend` | resend a verification OTP |
+| POST | `/auth/login` | email + password → returns a session token |
+| GET | `/auth/me` | the authenticated user + organization (session token) |
+
+## API keys (session token)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api-keys` | issue a key for your org (plaintext returned once) |
+| GET | `/api-keys` | list your org's keys (metadata only) |
+| DELETE | `/api-keys/{key_id}` | revoke a key |
 
 ## Vendors (API key)
 | Method | Path | Description |
@@ -94,19 +99,21 @@ Stateless and DB-backed variants of the five tools.
 
 ```bash
 BASE=http://localhost:8000
-ADMIN="X-Admin-Token: $AP_ADMIN_TOKEN"
 
-# 1. Create an organization
-ORG=$(curl -s -X POST $BASE/admin/organizations -H "$ADMIN" \
-  -H 'content-type: application/json' \
-  -d '{"name":"Acme Co","slug":"acme-co"}')
-ORG_ID=$(echo "$ORG" | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+# 1. Register an account (creates your organization). The OTP is emailed —
+#    with AP_EMAIL_BACKEND=console it is printed to the API server log.
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","password":"a-strong-password"}'
 
-# 2. Issue an API key (save the plaintext — shown once)
-KEY=$(curl -s -X POST $BASE/admin/organizations/$ORG_ID/api-keys -H "$ADMIN" \
-  -H 'content-type: application/json' -d '{"name":"default"}' \
-  | python -c "import sys,json;print(json.load(sys.stdin)['api_key'])")
-AUTH="Authorization: Bearer $KEY"
+# 2. Verify the email with the logged code → returns a session token.
+TOKEN=$(curl -s -X POST $BASE/auth/verify -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","code":"123456"}' \
+  | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+AUTH="Authorization: Bearer $TOKEN"
+
+# (optional) Mint an API key for programmatic / MCP clients:
+#   curl -s -X POST $BASE/api-keys -H "$AUTH" -H 'content-type: application/json' \
+#     -d '{"name":"default"}'   # → {"api_key":"ap_<prefix>.<secret>", ...}
 
 # 3. Onboard a vendor with a policy
 curl -s -X POST $BASE/vendors -H "$AUTH" -H 'content-type: application/json' -d '{

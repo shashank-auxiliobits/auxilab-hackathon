@@ -9,17 +9,20 @@ from ap_invoice.models.audit import ProcessingEvent
 from ap_invoice.models.invoice import Invoice, InvoiceLineItem
 from ap_invoice.models.organization import ApiKey, Organization
 from ap_invoice.models.policy_document import PolicyChunk, PolicyRule, VendorDocument
+from ap_invoice.models.user import EmailVerification, User
 from ap_invoice.models.vendor import Vendor, VendorPolicy
 
 __all__ = [
     "ApiKey",
     "Base",
+    "EmailVerification",
     "Invoice",
     "InvoiceLineItem",
     "Organization",
     "PolicyChunk",
     "PolicyRule",
     "ProcessingEvent",
+    "User",
     "Vendor",
     "VendorDocument",
     "VendorPolicy",

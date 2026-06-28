@@ -57,7 +57,7 @@ make test-int    # integration (needs `make db-up` + the ap_invoice_test databas
 ### Claude Code (CLI) — HTTP (recommended)
 
 ```bash
-KEY=ap_xxx.yyy     # an org API key (from `make seed` or POST /admin/.../api-keys)
+KEY=ap_xxx.yyy     # an org API key (from `make seed` or POST /api-keys)
 
 claude mcp add --transport http ap-invoice \
   http://localhost:8080/mcp \

@@ -1,4 +1,4 @@
-"""FastAPI dependencies: database session, API-key auth, admin guard."""
+"""FastAPI dependencies: database session, bearer auth (API key or session JWT)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from typing import Annotated
 from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_invoice.api.errors import AuthenticationError, AuthorizationError
-from ap_invoice.core.config import Settings, get_settings
+from ap_invoice.api.errors import AuthenticationError
 from ap_invoice.models.organization import Organization
-from ap_invoice.services.auth import authenticate_api_key
+from ap_invoice.models.user import User
+from ap_invoice.services.auth import authenticate_bearer, authenticate_user_token
 
 
 async def get_db(request: Request) -> AsyncSession:
@@ -24,7 +24,6 @@ async def get_db(request: Request) -> AsyncSession:
 
 
 DBSession = Annotated[AsyncSession, Depends(get_db)]
-SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 def _extract_token(authorization: str | None, x_api_key: str | None) -> str | None:
@@ -43,38 +42,32 @@ async def get_current_org(
     authorization: Annotated[str | None, Header()] = None,
     x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
 ) -> Organization:
-    """Authenticate the request via API key and return the owning organization."""
+    """Authenticate via an API key or session JWT and return the owning organization."""
     token = _extract_token(authorization, x_api_key)
     if not token:
-        raise AuthenticationError("Missing API key. Send 'Authorization: Bearer <key>'.")
+        raise AuthenticationError("Missing credentials. Send 'Authorization: Bearer <token>'.")
 
-    org = await authenticate_api_key(db, token)
+    org = await authenticate_bearer(db, token)
     if org is None:
-        raise AuthenticationError("Invalid, revoked, or expired API key.")
+        raise AuthenticationError("Invalid, revoked, or expired credentials.")
     return org
 
 
 CurrentOrg = Annotated[Organization, Depends(get_current_org)]
 
 
-async def require_admin(
-    settings: SettingsDep,
+async def get_current_user(
+    db: DBSession,
     authorization: Annotated[str | None, Header()] = None,
-    x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None,
-) -> None:
-    """Guard provisioning endpoints with the configured admin token."""
-    if not settings.admin_token:
-        raise AuthorizationError(
-            "Admin endpoints are disabled. Set AP_ADMIN_TOKEN to enable provisioning."
-        )
-    token = _extract_token(authorization, None) or (
-        x_admin_token.strip() if x_admin_token else None
-    )
-    if not token or not _constant_time_eq(token, settings.admin_token):
-        raise AuthenticationError("Invalid admin token.")
+) -> User:
+    """Authenticate a human user via a session JWT (not an API key)."""
+    token = _extract_token(authorization, None)
+    if not token:
+        raise AuthenticationError("Missing session token. Log in to obtain one.")
+    user = await authenticate_user_token(db, token)
+    if user is None:
+        raise AuthenticationError("Invalid or expired session token.")
+    return user
 
 
-def _constant_time_eq(a: str, b: str) -> bool:
-    import hmac
-
-    return hmac.compare_digest(a, b)
+CurrentUser = Annotated[User, Depends(get_current_user)]

@@ -15,7 +15,15 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from ap_invoice.api.errors import register_exception_handlers
-from ap_invoice.api.routes import admin, health, invoices, policies, tools, vendors
+from ap_invoice.api.routes import (
+    api_keys,
+    auth,
+    health,
+    invoices,
+    policies,
+    tools,
+    vendors,
+)
 from ap_invoice.core.config import get_settings
 from ap_invoice.core.logging import configure_logging, get_logger
 from ap_invoice.db.session import dispose_engine, get_sessionmaker
@@ -108,7 +116,8 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(health.router)
-    app.include_router(admin.router)
+    app.include_router(auth.router)
+    app.include_router(api_keys.router)
     app.include_router(vendors.router)
     app.include_router(policies.router)
     app.include_router(invoices.router)

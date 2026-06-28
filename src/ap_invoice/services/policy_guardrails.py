@@ -30,25 +30,47 @@ def _c(pattern: str) -> re.Pattern[str]:
 # real policy uses (e.g. "a PO is required regardless of amount" or "auto-approve
 # invoices under $500" must NOT trip these).
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (_c(r"\bignore\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier|preceding)\b"),
-     "instruction to ignore previous/earlier content"),
-    (_c(r"\bdisregard\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|rules?|polic|instruction)"),
-     "instruction to disregard rules/instructions"),
-    (_c(r"\b(?:ignore|override|bypass|skip|disable)\s+(?:the\s+|all\s+|any\s+)?"
-        r"(?:rules?|polic\w*|checks?|controls?|guardrails?|validation|verification|duplicate)"),
-     "instruction to bypass/disable controls"),
+    (
+        _c(r"\bignore\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier|preceding)\b"),
+        "instruction to ignore previous/earlier content",
+    ),
+    (
+        _c(
+            r"\bdisregard\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|rules?|polic|instruction)"
+        ),
+        "instruction to disregard rules/instructions",
+    ),
+    (
+        _c(
+            r"\b(?:ignore|override|bypass|skip|disable)\s+(?:the\s+|all\s+|any\s+)?"
+            r"(?:rules?|polic\w*|checks?|controls?|guardrails?|validation|verification|duplicate)"
+        ),
+        "instruction to bypass/disable controls",
+    ),
     (_c(r"\byou\s+are\s+(?:now\s+)?(?:a|an|the)\b"), "attempt to redefine the AI's role"),
     (_c(r"\bas\s+an?\s+(?:ai|assistant|language\s+model|llm)\b"), "text addressed to the AI"),
     (_c(r"\bsystem\s+prompt\b"), "reference to the system prompt"),
-    (_c(r"\bregardless\s+of\s+(?:the\s+)?(?:compliance|invoice|polic\w*|content|verification)\b"),
-     "command to decide regardless of the invoice/policy"),
-    (_c(r"\bdo\s+not\s+(?:flag|reject|hold|review|verify)\b"),
-     "command to disable flag/reject/review"),
-    (_c(r"\b(?:reveal|print|show|output|repeat|leak)\s+(?:your\s+|the\s+)?"
-        r"(?:system\s+)?(?:prompt|instructions)\b"),
-     "attempt to exfiltrate the prompt"),
-    (_c(r"\bset\s+(?:the\s+)?(?:decision|confidence|status|verdict)\s+(?:to|=)"),
-     "attempt to force the decision/confidence"),
+    (
+        _c(
+            r"\bregardless\s+of\s+(?:the\s+)?(?:compliance|invoice|polic\w*|content|verification)\b"
+        ),
+        "command to decide regardless of the invoice/policy",
+    ),
+    (
+        _c(r"\bdo\s+not\s+(?:flag|reject|hold|review|verify)\b"),
+        "command to disable flag/reject/review",
+    ),
+    (
+        _c(
+            r"\b(?:reveal|print|show|output|repeat|leak)\s+(?:your\s+|the\s+)?"
+            r"(?:system\s+)?(?:prompt|instructions)\b"
+        ),
+        "attempt to exfiltrate the prompt",
+    ),
+    (
+        _c(r"\bset\s+(?:the\s+)?(?:decision|confidence|status|verdict)\s+(?:to|=)"),
+        "attempt to force the decision/confidence",
+    ),
     (_c(r"</?\s*(?:system|instruction|prompt|user|assistant)\s*>"), "prompt/role markup"),
     (_c(r"\[/?INST\]|<\|.*?\|>|```\s*system"), "model control tokens"),
 ]

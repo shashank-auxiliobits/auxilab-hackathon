@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,17 +54,44 @@ class Settings(BaseSettings):
 
     # --- Security --------------------------------------------------------
     api_key_pepper: str = Field(
-        default="change-me-in-production",
-        min_length=8,
-        description="Server-side pepper mixed into API-key hashes. Rotate carefully.",
+        min_length=16,
+        description="Server-side pepper mixed into API-key and password hashes. Required — no "
+        'default. Generate: python -c "import secrets; print(secrets.token_urlsafe(48))".',
     )
-    admin_token: str | None = Field(
-        default=None,
-        description=(
-            "Bearer token for provisioning endpoints (create orgs & API keys). "
-            "If unset, those endpoints are disabled."
-        ),
+
+    # --- Auth: users, sessions (JWT), email-OTP verification -------------
+    jwt_secret: str = Field(
+        min_length=32,
+        description="HMAC secret for signing session JWTs. Required — no default. Generate: "
+        'python -c "import secrets; print(secrets.token_urlsafe(48))".',
     )
+    jwt_expire_minutes: int = Field(
+        default=60, ge=1, description="Lifetime of an issued access token, in minutes."
+    )
+    password_min_length: int = Field(
+        default=8, ge=8, description="Minimum length enforced on user passwords at registration."
+    )
+    otp_length: int = Field(default=6, ge=4, le=10, description="Number of digits in an email OTP.")
+    otp_ttl_minutes: int = Field(
+        default=10, ge=1, description="How long an emailed OTP remains valid, in minutes."
+    )
+    otp_max_attempts: int = Field(
+        default=5, ge=1, description="Failed OTP attempts allowed before a code is invalidated."
+    )
+
+    # --- Email delivery (OTP / verification) -----------------------------
+    email_backend: Literal["console", "smtp"] = Field(
+        default="console",
+        description="'console' logs the email (works out of the box); 'smtp' sends via a server.",
+    )
+    email_from: str = Field(
+        default="no-reply@ap-invoice.local", description="From address on outgoing emails."
+    )
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
 
     # --- MCP server ------------------------------------------------------
     mcp_host: str = "0.0.0.0"  # noqa: S104
@@ -102,6 +129,24 @@ class Settings(BaseSettings):
     extractor_max_tokens: int = 4096
     extractor_timeout_seconds: float = 60.0
 
+    # --- Extraction input limits (multi-file uploads) --------------------
+    max_file_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        description="Maximum decoded size of a single uploaded invoice file, in bytes.",
+    )
+    max_files_per_invoice: int = Field(
+        default=10,
+        ge=1,
+        description="Maximum number of files accepted per invoice extraction.",
+    )
+    max_extraction_images: int = Field(
+        default=16,
+        ge=1,
+        description="Maximum image parts (PDF pages + images, across all files) sent to "
+        "the vision model in one extraction, to bound cost and tokens.",
+    )
+
     # --- RAG / embeddings (for vendor policy documents) ------------------
     embedding_provider: Literal["local"] = Field(
         default="local",
@@ -128,6 +173,16 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _require_smtp_in_production(self) -> Settings:
+        """In production/staging, refuse the console email backend (OTPs must be delivered)."""
+        if self.environment in ("production", "staging") and self.email_backend != "smtp":
+            raise ValueError(
+                "Set AP_EMAIL_BACKEND=smtp (with AP_SMTP_HOST) in production so verification "
+                "emails are actually delivered."
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

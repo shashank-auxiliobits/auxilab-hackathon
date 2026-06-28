@@ -171,9 +171,7 @@ async def _call_anthropic(
     finally:
         await client.close()
 
-    tool_input = next(
-        (block.input for block in response.content if block.type == "tool_use"), None
-    )
+    tool_input = next((block.input for block in response.content if block.type == "tool_use"), None)
     if tool_input is None:
         raise LLMUnavailable("Model returned no tool output.")
     return dict(tool_input)
@@ -300,4 +298,5 @@ def _clean_schema_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
             return [simplify_anyof(item) for item in node]
         return node
 
-    return simplify_anyof(flat_schema)
+    cleaned: dict[str, Any] = simplify_anyof(flat_schema)
+    return cleaned

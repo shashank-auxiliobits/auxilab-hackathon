@@ -7,7 +7,7 @@ The included `docker-compose.yml` runs Postgres, the API, and the MCP server.
 ```bash
 # Required secrets (do NOT use the dev defaults in production)
 export AP_API_KEY_PEPPER=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
-export AP_ADMIN_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+export AP_JWT_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
 export AP_ANTHROPIC_API_KEY=sk-ant-...      # optional; enables the LLM extractor
 
 docker compose up -d --build
@@ -40,7 +40,7 @@ Never use `create_all` in production — it is only used by the integration test
 
 ## Production hardening checklist
 
-- [ ] Set a strong, unique `AP_API_KEY_PEPPER` and `AP_ADMIN_TOKEN` from a secret
+- [ ] Set a strong, unique `AP_API_KEY_PEPPER` and `AP_JWT_SECRET` from a secret
       store (rotating the pepper invalidates existing keys — plan a re-issue).
 - [ ] `AP_ENVIRONMENT=production`, `AP_LOG_JSON=true`.
 - [ ] Terminate TLS at a reverse proxy / load balancer in front of both services.

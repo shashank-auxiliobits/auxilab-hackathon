@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import uuid
 from typing import Annotated
 
@@ -13,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from ap_invoice.api.deps import CurrentOrg, DBSession
-from ap_invoice.api.errors import NotFoundError, ValidationError
+from ap_invoice.api.errors import NotFoundError, ServiceUnavailableError, ValidationError
 from ap_invoice.core.enums import InvoiceStatus
 from ap_invoice.models.audit import ProcessingEvent
 from ap_invoice.models.invoice import Invoice, InvoiceLineItem
@@ -31,7 +29,14 @@ from ap_invoice.schemas.processing import (
     ProcessRequest,
     ProcessResult,
 )
-from ap_invoice.services.extraction import extract_invoice
+from ap_invoice.schemas.tools import ExtractedInvoice
+from ap_invoice.services.extraction import (
+    ExtractionUnavailable,
+    InvalidFileError,
+    collect_specs,
+    decode_files,
+    extract_invoice,
+)
 from ap_invoice.services.ingestion import (
     compute_fingerprint,
     find_by_idempotency,
@@ -44,14 +49,19 @@ from ap_invoice.services.workflow import InvalidTransitionError, transition_stat
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 
-def _decode_file(file_base64: str | None) -> bytes | None:
-    """Decode an optional base64 invoice file, raising a 422 on malformed input."""
-    if not file_base64:
-        return None
+async def _extract_from_request(payload: InvoiceIngest | ProcessRequest) -> ExtractedInvoice:
+    """Decode the request's file(s) and run extraction, mapping failures to HTTP errors.
+
+    Bad client input (malformed base64, oversized/too-many/unsupported files) → 422;
+    an unavailable LLM provider → 503.
+    """
     try:
-        return base64.b64decode(file_base64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise ValidationError(f"file_base64 is not valid base64: {exc}") from exc
+        specs = collect_specs(payload.file_base64, payload.content_type, payload.files)
+        return await extract_invoice(payload.raw_text, files=decode_files(specs))
+    except InvalidFileError as exc:
+        raise ValidationError(str(exc)) from exc
+    except ExtractionUnavailable as exc:
+        raise ServiceUnavailableError(f"Invoice extraction is unavailable: {exc}") from exc
 
 
 async def _load_detail(db: DBSession, invoice_id: uuid.UUID) -> Invoice:
@@ -131,10 +141,7 @@ async def ingest_invoice(
     if existing is not None:
         return InvoiceDetail.model_validate(await _load_detail(db, existing.id))
 
-    file_bytes = _decode_file(payload.file_base64)
-    extracted = await extract_invoice(
-        payload.raw_text, file_bytes=file_bytes, content_type=payload.content_type
-    )
+    extracted = await _extract_from_request(payload)
     invoice = invoice_from_extracted(
         org.id,
         extracted,
@@ -224,10 +231,7 @@ async def process_raw_invoice(
             db, org, existing, actor=payload.actor, auto_onboard=payload.auto_onboard
         )
 
-    file_bytes = _decode_file(payload.file_base64)
-    extracted = await extract_invoice(
-        payload.raw_text, file_bytes=file_bytes, content_type=payload.content_type
-    )
+    extracted = await _extract_from_request(payload)
     invoice = invoice_from_extracted(
         org.id,
         extracted,

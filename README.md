@@ -85,21 +85,92 @@ make run-mcp     # MCP server → http://127.0.0.1:8080/mcp
 ```bash
 make install                                   # deps into a uv venv
 make db-up                                      # start PostgreSQL
-cp .env.example .env                            # then set AP_API_KEY_PEPPER & AP_ADMIN_TOKEN
+cp .env.example .env                            # then set AP_API_KEY_PEPPER & AP_JWT_SECRET
 make migrate                                     # apply migrations
-make seed                                        # demo org + API key (prints the key)
+# Optional: bootstrap the first owner directly (otherwise use /auth/register below):
+uv run python scripts/seed.py --email you@example.com   # prints login + an API key
 ```
 </details>
 
-Then process your first invoice (use the API key printed by `make seed`):
+### Create your account (self-service)
+
+Register with email + password, verify with the one-time code, then log in for a
+session token. With the default `AP_EMAIL_BACKEND=console`, the OTP is **printed to
+the API server log** — no mail server needed to try it locally.
+
+```bash
+# 1. Register (creates your organization). The OTP is logged by the API.
+curl -s -X POST http://localhost:8000/auth/register \
+  -H "content-type: application/json" \
+  -d '{"email":"you@example.com","password":"a-strong-password"}'
+
+# 2. Verify the email with the code from the API log → returns a session token.
+curl -s -X POST http://localhost:8000/auth/verify \
+  -H "content-type: application/json" \
+  -d '{"email":"you@example.com","code":"123456"}'
+# → {"access_token":"<jwt>","token_type":"bearer","expires_in":3600, ...}
+
+# 3. Later, log in any time with email + password for a fresh token.
+curl -s -X POST http://localhost:8000/auth/login \
+  -H "content-type: application/json" \
+  -d '{"email":"you@example.com","password":"a-strong-password"}'
+```
+
+Then onboard a vendor and its policy (the policy is the source of truth — there is
+no seeded/demo data; everything lives in your database), and process an invoice:
+
+```bash
+TOKEN="<access_token from verify/login>"
+AUTH="Authorization: Bearer $TOKEN"
+
+# 1. Create a vendor with a policy.
+VID=$(curl -s -X POST http://localhost:8000/vendors -H "$AUTH" \
+  -H "content-type: application/json" \
+  -d '{"canonical_name":"Microsoft Corporation","aliases":["Microsoft","MSFT"]}' \
+  | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+
+# 2. Upload the vendor's policy (the decision LLM judges invoices against this).
+curl -s -X POST http://localhost:8000/vendors/$VID/documents -H "$AUTH" \
+  -H "content-type: application/json" \
+  -d '{"filename":"policy.txt","text":"Payment terms 2/10 Net 30. Invoices must not exceed $5,000. All invoices in USD."}'
+
+# 3. Process an invoice — judged against the policy you just uploaded.
+curl -s -X POST http://localhost:8000/invoices/process -H "$AUTH" \
+  -H "content-type: application/json" \
+  -d '{"raw_text":"Microsoft\nInvoice Number: INV-1\nInvoice Date: 2026-06-01\nPayment Terms: 2/10 Net 30\nGrand Total: $1,250.00"}'
+# → {"decision":"auto_approve","status":"approved", ...}
+```
+
+> Programmatic and MCP clients use **API keys** (`Authorization: Bearer ap_<prefix>.<secret>`),
+> which a logged-in user mints at `POST /api-keys`. There is no shared admin token.
+
+#### Multi-file invoices (scans, multi-page PDFs, attachments)
+
+An invoice can be supplied as **one or more files** — a scan split into per-page
+images, a multi-page PDF, or an invoice plus supporting attachments — all
+extracted together as a single invoice. Use the `files` array (each entry is a
+base64 file with an optional `content_type` and `filename`); `raw_text` and a
+single `file_base64` still work and are combined with `files` if all are given.
+`content_type` is optional — it's sniffed from the file's magic bytes when omitted.
 
 ```bash
 curl -s -X POST http://localhost:8000/invoices/process \
   -H "Authorization: Bearer ap_<prefix>.<secret>" \
   -H "content-type: application/json" \
-  -d '{"raw_text":"Microsoft\nInvoice Number: INV-1\nInvoice Date: 2026-06-01\nPayment Terms: 2/10 Net 30\nGrand Total: $1,250.00"}'
-# → {"decision":"auto_approve","status":"approved", ...}
+  -d '{
+        "files": [
+          {"file_base64": "<page1-base64>", "content_type": "image/png", "filename": "page1.png"},
+          {"file_base64": "<page2-base64>", "content_type": "image/jpeg", "filename": "page2.jpg"}
+        ]
+      }'
 ```
+
+Limits are configurable: `AP_MAX_FILES_PER_INVOICE` (default 10),
+`AP_MAX_FILE_BYTES` (default 10 MiB per file), and `AP_MAX_EXTRACTION_IMAGES`
+(default 16 image parts — PDF pages + images — sent to the model per extraction).
+Malformed, oversized, too-many, or unsupported files return **422**; the same
+`files` array is available on `/invoices/ingest` and the `extract_invoice_fields`
+and `process_invoice_text` MCP tools.
 
 ### Full stack with Docker
 

@@ -10,19 +10,27 @@ loudly rather than silently degrading.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ap_invoice.schemas.tools import ExtractedInvoice
+from ap_invoice.services.extraction.files import InputFile, InvalidFileError
 from ap_invoice.services.extraction.ocr import ExtractionUnavailable, extract_with_vision
 
-__all__ = ["ExtractionUnavailable", "extract_invoice"]
+__all__ = ["ExtractionUnavailable", "InputFile", "InvalidFileError", "extract_invoice"]
 
 
 async def extract_invoice(
     raw_text: str | None = None,
     *,
+    files: Sequence[InputFile] | None = None,
     file_bytes: bytes | None = None,
     content_type: str | None = None,
 ) -> ExtractedInvoice:
-    """Extract structured invoice fields from text and/or a file via the configured LLM."""
+    """Extract structured invoice fields from text and/or one or more files.
+
+    ``files`` carries multi-file invoices (pages/attachments); ``file_bytes`` +
+    ``content_type`` remain supported for a single file.
+    """
     return await extract_with_vision(
-        raw_text=raw_text, file_bytes=file_bytes, content_type=content_type
+        raw_text=raw_text, files=files, file_bytes=file_bytes, content_type=content_type
     )

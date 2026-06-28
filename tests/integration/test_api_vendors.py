@@ -7,9 +7,30 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
-from ap_invoice.core.config import get_settings
+from ap_invoice.core.security import generate_api_key
+from ap_invoice.db.session import session_scope
+from ap_invoice.models.organization import ApiKey, Organization
 
 pytestmark = pytest.mark.integration
+
+
+async def _provision_org_auth() -> dict[str, str]:
+    """Create a second org + API key directly in the DB; return its Bearer header."""
+    async with session_scope() as db:
+        org = Organization(name="Other", slug=f"o-{uuid.uuid4().hex[:8]}")
+        db.add(org)
+        await db.flush()
+        generated = generate_api_key()
+        db.add(
+            ApiKey(
+                organization_id=org.id,
+                name="k",
+                prefix=generated.prefix,
+                key_hash=generated.key_hash,
+            )
+        )
+        await db.flush()
+    return {"Authorization": f"Bearer {generated.full_key}"}
 
 
 async def test_create_vendor_with_policy(client: AsyncClient, auth: dict[str, str]) -> None:
@@ -69,18 +90,7 @@ async def test_tenant_isolation(client: AsyncClient, auth: dict[str, str]) -> No
     ).json()["id"]
 
     # Provision a second org; it must not see the first org's vendor.
-    admin = {"X-Admin-Token": get_settings().admin_token or ""}
-    other = await client.post(
-        "/admin/organizations",
-        headers=admin,
-        json={"name": "Other", "slug": f"o-{uuid.uuid4().hex[:8]}"},
-    )
-    other_key = (
-        await client.post(
-            f"/admin/organizations/{other.json()['id']}/api-keys", headers=admin, json={"name": "k"}
-        )
-    ).json()["api_key"]
-    other_auth = {"Authorization": f"Bearer {other_key}"}
+    other_auth = await _provision_org_auth()
 
     assert (await client.get("/vendors", headers=other_auth)).json()["total"] == 0
     assert (await client.get(f"/vendors/{vid}", headers=other_auth)).status_code == 404
