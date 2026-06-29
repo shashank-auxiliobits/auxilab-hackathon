@@ -1,18 +1,17 @@
 # Self-hosted deployment for AP Invoice Intelligence. Two database modes:
 #
-#   Bundled Postgres (all-in-one):
-#     docker compose --profile bundled-db up -d
+#   A) Bundled Postgres (all-in-one, default — no flags):
+#        docker compose up -d                 # Postgres + API + MCP
 #
-#   External/managed database (RDS, Cloud SQL, Neon, Supabase, …):
-#     set AP_DATABASE_URL=postgresql+asyncpg://USER:PASS@HOST:5432/DB  (in .env or env)
-#     docker compose up -d            # starts API + MCP only; no bundled DB
+#   B) External / managed database (RDS, Cloud SQL, Neon, Supabase, …):
+#        export AP_DATABASE_URL=postgresql+asyncpg://USER:PASS@HOST:5432/DB
+#        docker compose up -d api mcp         # API + MCP only; bundled DB not started
 name: ap-invoice-intelligence
 
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    profiles: ["bundled-db"]   # opt-in: only starts with `--profile bundled-db`
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ap_password}

@@ -203,16 +203,16 @@ export AP_ANTHROPIC_API_KEY=sk-ant-...    # your LLM provider key
 **Database — pick one:**
 
 ```bash
-# A) Bundled Postgres (all-in-one, great for local/self-host):
-docker compose --profile bundled-db up -d
+# A) Bundled Postgres (all-in-one — the default, no flags):
+docker compose up -d                 # Postgres + API + MCP
 
 # B) External / managed database (RDS, Cloud SQL, Neon, Supabase, ...):
 export AP_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/DBNAME
-docker compose up -d        # starts API + MCP only — no bundled DB
+docker compose up -d api mcp         # API + MCP only — bundled DB not started
 ```
-`AP_DATABASE_URL` is the single switch: leave it unset for the bundled DB, or set
-your connection string for any external Postgres. Migrations run automatically on
-container start.
+`AP_DATABASE_URL` is the single switch: leave it unset to use the bundled Postgres,
+or set your connection string for any external Postgres. Migrations run
+automatically on container start.
 
 API → `http://localhost:8000` · MCP → `http://localhost:8080` · OpenAPI docs → `/docs`.
 
