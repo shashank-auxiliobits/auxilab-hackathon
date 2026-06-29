@@ -54,10 +54,10 @@ ap-invoice-api = "ap_invoice.api.main:run"
 ap-invoice-mcp = "ap_invoice.mcp.server:run"
 
 [project.urls]
-Homepage = "https://github.com/your-org/ap-invoice-intelligence"
-Documentation = "https://github.com/your-org/ap-invoice-intelligence/tree/main/docs"
-Repository = "https://github.com/your-org/ap-invoice-intelligence"
-Issues = "https://github.com/your-org/ap-invoice-intelligence/issues"
+Homepage = "https://github.com/AuxiLabs/auxilab-mcp-ap-invoice"
+Documentation = "https://github.com/AuxiLabs/auxilab-mcp-ap-invoice/tree/main/docs"
+Repository = "https://github.com/AuxiLabs/auxilab-mcp-ap-invoice"
+Issues = "https://github.com/AuxiLabs/auxilab-mcp-ap-invoice/issues"
 
 [build-system]
 requires = ["hatchling"]

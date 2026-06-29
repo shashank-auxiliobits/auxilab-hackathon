@@ -16,7 +16,7 @@ Steps or a minimal request (curl / tool call) that triggers it.
 **Environment**
 - Version / commit:
 - Deployment (Docker / local / k8s):
-- `AP_EXTRACTOR_ENGINE`:
+- `AP_LLM_PROVIDER` (claude / openai / gemini):
 
 **Logs**
 Relevant JSON log lines (redact secrets and the `Authorization` header).

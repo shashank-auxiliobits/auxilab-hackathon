@@ -8,8 +8,8 @@ you set up and explains the workflow.
 Prerequisites: [`uv`](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
-git clone https://github.com/your-org/ap-invoice-intelligence
-cd ap-invoice-intelligence
+git clone https://github.com/AuxiLabs/auxilab-mcp-ap-invoice
+cd auxilab-mcp-ap-invoice
 
 make install            # create the venv and install deps (incl. dev)
 make db-up              # start PostgreSQL in Docker
