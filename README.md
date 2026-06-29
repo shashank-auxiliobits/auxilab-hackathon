@@ -193,11 +193,26 @@ and `process_invoice_text` MCP tools.
 
 ### Full stack with Docker
 
+Set the required secrets once:
 ```bash
 export AP_API_KEY_PEPPER=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
-export AP_ANTHROPIC_API_KEY=sk-ant-...   # optional; enables the LLM extractor
-docker compose up -d
+export AP_JWT_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+export AP_ANTHROPIC_API_KEY=sk-ant-...    # your LLM provider key
 ```
+
+**Database — pick one:**
+
+```bash
+# A) Bundled Postgres (all-in-one, great for local/self-host):
+docker compose --profile bundled-db up -d
+
+# B) External / managed database (RDS, Cloud SQL, Neon, Supabase, ...):
+export AP_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/DBNAME
+docker compose up -d        # starts API + MCP only — no bundled DB
+```
+`AP_DATABASE_URL` is the single switch: leave it unset for the bundled DB, or set
+your connection string for any external Postgres. Migrations run automatically on
+container start.
 
 API → `http://localhost:8000` · MCP → `http://localhost:8080` · OpenAPI docs → `/docs`.
 

@@ -8,10 +8,10 @@ inject these via your orchestrator's secret store — never commit a populated
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, PostgresDsn, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -46,7 +46,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"  # noqa: S104 - bind-all is intentional inside containers
     api_port: int = 8000
     api_root_path: str = ""
-    cors_allow_origins: list[str] = Field(default_factory=list)
+    # NoDecode: take the raw env string (so `_split_origins` parses a comma-separated
+    # list and an empty value -> []), instead of pydantic-settings JSON-decoding it.
+    cors_allow_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     rate_limit: str = Field(
         default="120/minute",
         description="Default per-client rate limit (slowapi syntax).",
@@ -145,6 +147,11 @@ class Settings(BaseSettings):
         ge=1,
         description="Maximum image parts (PDF pages + images, across all files) sent to "
         "the vision model in one extraction, to bound cost and tokens.",
+    )
+    duplicate_candidate_limit: int = Field(
+        default=1000,
+        ge=1,
+        description="Max recent invoices pulled as duplicate-detection candidates per request.",
     )
 
     # --- RAG / embeddings (for vendor policy documents) ------------------

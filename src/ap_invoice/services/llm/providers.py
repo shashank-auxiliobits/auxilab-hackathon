@@ -178,7 +178,7 @@ async def _call_anthropic(
 
 
 # --------------------------------------------------------------------------- #
-# OpenAI-compatible backend (GPT / local / GLM)
+# OpenAI-compatible backend (OpenAI GPT / Gemini / any compatible endpoint)
 # --------------------------------------------------------------------------- #
 
 

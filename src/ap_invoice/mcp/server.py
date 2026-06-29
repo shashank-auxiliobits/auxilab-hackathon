@@ -79,8 +79,6 @@ _INSTRUCTIONS = (
     "discounts, and check_invoice_completeness before approving."
 )
 
-_DUP_CANDIDATE_LIMIT = 1000
-
 
 async def _extract(
     raw_text: str | None,
@@ -342,7 +340,7 @@ def build_server() -> FastMCP:
                         select(Invoice)
                         .where(Invoice.organization_id == org.id)
                         .order_by(Invoice.created_at.desc())
-                        .limit(_DUP_CANDIDATE_LIMIT)
+                        .limit(get_settings().duplicate_candidate_limit)
                     )
                 )
                 .scalars()

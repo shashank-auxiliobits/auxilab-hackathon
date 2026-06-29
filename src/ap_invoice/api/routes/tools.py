@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from ap_invoice.api.deps import CurrentOrg, DBSession
 from ap_invoice.api.errors import ServiceUnavailableError, ValidationError
+from ap_invoice.core.config import get_settings
 from ap_invoice.models.invoice import Invoice
 from ap_invoice.models.vendor import Vendor
 from ap_invoice.schemas.tools import (
@@ -44,9 +45,6 @@ from ap_invoice.services.extraction import (
 )
 
 router = APIRouter(prefix="/tools", tags=["tools"])
-
-# Cap on how many recent invoices are pulled as duplicate candidates per request.
-_DUP_CANDIDATE_LIMIT = 1000
 
 
 @router.post("/extract", response_model=ExtractedInvoice, summary="Invoice Field Extractor (OCR)")
@@ -108,7 +106,7 @@ async def tool_detect_duplicates(
                 select(Invoice)
                 .where(Invoice.organization_id == org.id)
                 .order_by(Invoice.created_at.desc())
-                .limit(_DUP_CANDIDATE_LIMIT)
+                .limit(get_settings().duplicate_candidate_limit)
             )
         )
         .scalars()

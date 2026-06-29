@@ -1,12 +1,18 @@
-# Local / self-hosted deployment for AP Invoice Intelligence.
-#   docker compose up -d            -> Postgres + API + MCP server
-#   docker compose up -d postgres   -> just the database (for local dev)
+# Self-hosted deployment for AP Invoice Intelligence. Two database modes:
+#
+#   Bundled Postgres (all-in-one):
+#     docker compose --profile bundled-db up -d
+#
+#   External/managed database (RDS, Cloud SQL, Neon, Supabase, …):
+#     set AP_DATABASE_URL=postgresql+asyncpg://USER:PASS@HOST:5432/DB  (in .env or env)
+#     docker compose up -d            # starts API + MCP only; no bundled DB
 name: ap-invoice-intelligence
 
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    profiles: ["bundled-db"]   # opt-in: only starts with `--profile bundled-db`
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ap_password}
@@ -30,8 +36,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false   # bundled DB is optional; external AP_DATABASE_URL works without it
     environment:
-      AP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ap}:${POSTGRES_PASSWORD:-ap_password}@postgres:5432/${POSTGRES_DB:-ap_invoice}
+      # External DB: set AP_DATABASE_URL. Unset -> falls back to the bundled postgres service.
+      AP_DATABASE_URL: ${AP_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-ap}:${POSTGRES_PASSWORD:-ap_password}@postgres:5432/${POSTGRES_DB:-ap_invoice}}
       # Local default is development so `docker compose up` boots and registration
       # works out of the box (OTP logged). For a real deploy set AP_ENVIRONMENT=production
       # plus AP_EMAIL_BACKEND=smtp and the AP_SMTP_* values below.
@@ -67,8 +75,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false   # bundled DB is optional; external AP_DATABASE_URL works without it
     environment:
-      AP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ap}:${POSTGRES_PASSWORD:-ap_password}@postgres:5432/${POSTGRES_DB:-ap_invoice}
+      # External DB: set AP_DATABASE_URL. Unset -> falls back to the bundled postgres service.
+      AP_DATABASE_URL: ${AP_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-ap}:${POSTGRES_PASSWORD:-ap_password}@postgres:5432/${POSTGRES_DB:-ap_invoice}}
       # Local default is development so `docker compose up` boots and registration
       # works out of the box (OTP logged). For a real deploy set AP_ENVIRONMENT=production
       # plus AP_EMAIL_BACKEND=smtp and the AP_SMTP_* values below.

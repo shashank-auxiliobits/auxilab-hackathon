@@ -66,7 +66,7 @@ class ProcessingEventType(StrEnum):
 class ExtractionSource(StrEnum):
     """Which engine produced an extraction result."""
 
-    OCR = "ocr"  # GLM vision OCR (current extraction path)
+    OCR = "ocr"  # vision OCR (current extraction path)
     LLM = "llm"
     DETERMINISTIC = "deterministic"  # legacy; retained for previously-stored rows
     HYBRID = "hybrid"  # legacy; retained for previously-stored rows

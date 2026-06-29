@@ -31,7 +31,7 @@ class ExtractedLineItem(BaseModel):
 class ExtractRequest(BaseModel):
     raw_text: str | None = Field(default=None, description="Raw invoice text, if available.")
     file_base64: str | None = Field(
-        default=None, description="Base64-encoded invoice file (image or PDF) for GLM OCR."
+        default=None, description="Base64-encoded invoice file (image or PDF) for vision OCR."
     )
     content_type: str | None = Field(
         default=None, description="MIME type of file_base64, e.g. 'image/png'."

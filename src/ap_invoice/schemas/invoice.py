@@ -58,7 +58,7 @@ class InvoiceCreate(APIModel):
 
 
 class InvoiceIngest(APIModel):
-    """Ingest an invoice (text and/or a file) for GLM OCR extraction + processing."""
+    """Ingest an invoice (text and/or files) for vision OCR extraction + processing."""
 
     raw_text: str | None = Field(
         default=None, max_length=200_000, description="Raw invoice text, if available."

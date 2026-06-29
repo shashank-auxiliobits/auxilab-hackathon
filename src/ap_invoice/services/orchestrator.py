@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ap_invoice.core.config import get_settings
 from ap_invoice.core.enums import (
     ApprovalDecision,
     InvoiceStatus,
@@ -45,8 +46,6 @@ from ap_invoice.services.duplicate_detector import detect_duplicates
 from ap_invoice.services.llm_decision import decide as decide_invoice
 from ap_invoice.services.payment_terms import calculate_payment_terms
 from ap_invoice.services.vendor_normaliser import normalise_vendor
-
-_DUP_CANDIDATE_LIMIT = 1000
 
 # How a policy decision maps to the persisted invoice status.
 _DECISION_STATUS = {
@@ -239,7 +238,7 @@ async def process_invoice(
                 select(Invoice)
                 .where(Invoice.organization_id == org.id, Invoice.id != invoice.id)
                 .order_by(Invoice.created_at.desc())
-                .limit(_DUP_CANDIDATE_LIMIT)
+                .limit(get_settings().duplicate_candidate_limit)
             )
         )
         .scalars()

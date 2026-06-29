@@ -1,4 +1,4 @@
-"""Provider-agnostic LLM tool-calling layer (Claude / GPT / local / GLM)."""
+"""Provider-agnostic LLM tool-calling layer (Claude / OpenAI / Gemini)."""
 
 from ap_invoice.services.llm.providers import (
     ContentPart,
