@@ -27,7 +27,9 @@ _MAX_FILES_PER_REQUEST = 50
 class ProcessRequest(APIModel):
     """Process an invoice end-to-end (vision OCR extract → validate → LLM decide)."""
 
-    raw_text: str | None = Field(default=None, description="Raw invoice text, if available.")
+    raw_text: str | None = Field(
+        default=None, max_length=200_000, description="Raw invoice text, if available."
+    )
     file_base64: str | None = Field(
         default=None,
         description="Base64-encoded invoice file (image or PDF). For a single file; "

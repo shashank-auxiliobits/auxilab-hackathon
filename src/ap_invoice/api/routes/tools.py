@@ -8,12 +8,11 @@ not have to supply them.
 
 from __future__ import annotations
 
-import base64
-
 from fastapi import APIRouter
 from sqlalchemy import select
 
 from ap_invoice.api.deps import CurrentOrg, DBSession
+from ap_invoice.api.errors import ServiceUnavailableError, ValidationError
 from ap_invoice.models.invoice import Invoice
 from ap_invoice.models.vendor import Vendor
 from ap_invoice.schemas.tools import (
@@ -37,6 +36,12 @@ from ap_invoice.services import (
     extract_invoice,
     normalise_vendor,
 )
+from ap_invoice.services.extraction import (
+    ExtractionUnavailable,
+    InvalidFileError,
+    collect_specs,
+    decode_files,
+)
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -46,10 +51,15 @@ _DUP_CANDIDATE_LIMIT = 1000
 
 @router.post("/extract", response_model=ExtractedInvoice, summary="Invoice Field Extractor (OCR)")
 async def tool_extract(payload: ExtractRequest, _: CurrentOrg) -> ExtractedInvoice:
-    file_bytes = base64.b64decode(payload.file_base64) if payload.file_base64 else None
-    return await extract_invoice(
-        payload.raw_text, file_bytes=file_bytes, content_type=payload.content_type
-    )
+    # Decode through the shared path so size/validation caps apply and bad input
+    # maps to 422 / an unavailable provider to 503 (not a generic 500).
+    try:
+        specs = collect_specs(payload.file_base64, payload.content_type, None)
+        return await extract_invoice(payload.raw_text, files=decode_files(specs))
+    except InvalidFileError as exc:
+        raise ValidationError(str(exc)) from exc
+    except ExtractionUnavailable as exc:
+        raise ServiceUnavailableError(f"Invoice extraction is unavailable: {exc}") from exc
 
 
 @router.post(

@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **Richer MCP toolset for agents (10 → 19 tools).** New read tools let an agent
+  query any invoice data: `get_invoice` (full detail + line items),
+  `get_invoice_audit_trail` (the "why" behind a decision), `search_invoices`
+  (status/vendor/number/amount-range/date-range/text), `get_vendor_policy`, and
+  `search_vendor_policy` (RAG). New analytics tools: `spend_analytics`
+  (by vendor/month), `payables_aging`, `discount_opportunities`, and
+  `automation_metrics` (touchless rate). Backed by reusable org-scoped queries in
+  `services/reporting.py`.
 - **Self-service authentication.** Users register with **email + password**,
   verify their email with a one-time code (OTP), and log in for a session token
   (JWT) — no shared admin token. New `/auth/register`, `/auth/verify`,
@@ -26,6 +34,23 @@ All notable changes to this project are documented here. The format is based on
 - Configurable upload limits: `AP_MAX_FILE_BYTES` (per-file size),
   `AP_MAX_FILES_PER_INVOICE` (file count), and `AP_MAX_EXTRACTION_IMAGES`
   (total image parts sent to the vision model per extraction).
+
+### Security & hardening (audit remediation)
+- **Auth abuse protection:** dedicated per-endpoint rate limits on `/auth/login`,
+  `/auth/verify`, `/auth/resend`, `/auth/register`; only the most recently issued
+  OTP stays live (prior unconsumed codes are invalidated); the failed-OTP attempt
+  cap is now incremented atomically in SQL (no lost-update bypass under concurrency).
+- **Email is sent after the DB commit** (FastAPI background task), so a recipient
+  can never receive a code for state that rolled back.
+- **Fail-fast config:** `AP_EMAIL_BACKEND=smtp` without `AP_SMTP_HOST` is rejected at
+  startup; docker-compose now boots out of the box (development + console email).
+- **Bounded inputs:** `max_length` on policy text and `raw_text`; `/tools/extract`
+  routes through the shared decoder (size/type caps, 422/503 instead of 500).
+- **MCP robustness:** `status` filters are validated against the enum and UUIDs are
+  guarded in `list_invoices`/`search_invoices`/`update_invoice_status`/`get_invoice`
+  (clean `ToolError` instead of a silent empty result or 500).
+- **Analytics correctness:** `spend_analytics` groups by the canonical vendor (joined
+  from the vendor master), so OCR name variants no longer split a vendor's spend.
 
 ### Changed (production hardening)
 - **`AP_API_KEY_PEPPER` and `AP_JWT_SECRET` are now required** (no insecure defaults);

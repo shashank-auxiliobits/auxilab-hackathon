@@ -26,7 +26,7 @@ from ap_invoice.core.security import (
 from ap_invoice.db.session import session_scope
 from ap_invoice.models.organization import Organization
 from ap_invoice.models.user import EmailVerification, User
-from ap_invoice.services.email import EmailMessage, EmailSender
+from ap_invoice.services.email import EmailMessage
 
 
 class AccountError(Exception):
@@ -77,22 +77,29 @@ async def _latest_pending_verification(
     ).scalar_one_or_none()
 
 
-async def issue_otp(db: AsyncSession, user: User, sender: EmailSender) -> None:
-    """Create a fresh OTP for the user and send it via the configured email backend."""
+async def issue_otp(db: AsyncSession, user: User) -> EmailMessage:
+    """Create a fresh OTP and return the verification email to send.
+
+    Invalidates any earlier unconsumed codes for the user so exactly one code is
+    ever live. The email is **returned, not sent** — the caller dispatches it after
+    the transaction commits (so a recipient never gets a code for rolled-back state).
+    """
     settings = get_settings()
+    await db.execute(
+        update(EmailVerification)
+        .where(EmailVerification.user_id == user.id, EmailVerification.consumed_at.is_(None))
+        .values(consumed_at=datetime.now(UTC))
+    )
     code = generate_otp(settings.otp_length)
     expires_at = datetime.now(UTC) + timedelta(minutes=settings.otp_ttl_minutes)
     db.add(EmailVerification(user_id=user.id, code_hash=hash_otp(code), expires_at=expires_at))
     await db.flush()
-    await sender.send(
-        EmailMessage(
-            to=user.email,
-            subject="Your AP Invoice verification code",
-            body=(
-                f"Your verification code is {code}\n\n"
-                f"It expires in {settings.otp_ttl_minutes} minutes."
-            ),
-        )
+    return EmailMessage(
+        to=user.email,
+        subject="Your AP Invoice verification code",
+        body=(
+            f"Your verification code is {code}\n\nIt expires in {settings.otp_ttl_minutes} minutes."
+        ),
     )
 
 
@@ -102,13 +109,13 @@ async def register_user(
     email: str,
     password: str,
     organization_name: str | None,
-    sender: EmailSender,
-) -> User:
-    """Create an organization + owner user (unverified) and send a verification OTP.
+) -> tuple[User, EmailMessage]:
+    """Create an organization + owner user (unverified); return the user and the
+    verification email to send.
 
-    Re-registering an *unverified* email updates the password and resends a code
-    (so a typo'd password before verifying isn't a dead end). A *verified* email
-    raises :class:`EmailAlreadyRegistered`.
+    Re-registering an *unverified* email updates the password and issues a fresh
+    code (so a typo'd password before verifying isn't a dead end). A *verified*
+    email raises :class:`EmailAlreadyRegistered`.
     """
     email = _normalize_email(email)
     existing = await get_user_by_email(db, email)
@@ -117,8 +124,7 @@ async def register_user(
             raise EmailAlreadyRegistered(email)
         existing.password_hash = hash_password(password)
         await db.flush()
-        await issue_otp(db, existing, sender)
-        return existing
+        return existing, await issue_otp(db, existing)
 
     org_name = (organization_name or "").strip() or f"{email.split('@')[0]}'s workspace"
     org = Organization(name=org_name, slug=_slugify(org_name))
@@ -133,8 +139,7 @@ async def register_user(
     )
     db.add(user)
     await db.flush()
-    await issue_otp(db, user, sender)
-    return user
+    return user, await issue_otp(db, user)
 
 
 async def verify_email_otp(db: AsyncSession, *, email: str, code: str) -> User:
@@ -155,12 +160,14 @@ async def verify_email_otp(db: AsyncSession, *, email: str, code: str) -> User:
     if not verify_otp(code, verification.code_hash):
         # Persist the failed attempt in its own transaction: the API returns 4xx
         # here, and the request-scoped session is rolled back on 4xx — so the
-        # counter would otherwise never stick and the cap could never trip.
+        # counter would otherwise never stick and the cap could never trip. The
+        # increment is computed in SQL (not Python) so concurrent wrong guesses
+        # cannot lose an update and slip past the attempt cap.
         async with session_scope() as side:
             await side.execute(
                 update(EmailVerification)
                 .where(EmailVerification.id == verification.id)
-                .values(attempts=verification.attempts + 1)
+                .values(attempts=EmailVerification.attempts + 1)
             )
         raise OtpError("Incorrect verification code.")
 
@@ -170,14 +177,15 @@ async def verify_email_otp(db: AsyncSession, *, email: str, code: str) -> User:
     return user
 
 
-async def resend_otp(db: AsyncSession, *, email: str, sender: EmailSender) -> None:
-    """Issue a fresh OTP for an unverified account. Silently no-ops otherwise.
+async def resend_otp(db: AsyncSession, *, email: str) -> EmailMessage | None:
+    """Return a fresh verification email for an unverified account, else ``None``.
 
-    The no-op (rather than an error) avoids leaking which emails are registered.
+    The ``None`` (rather than an error) avoids leaking which emails are registered.
     """
     user = await get_user_by_email(db, email)
     if user is not None and not user.is_email_verified:
-        await issue_otp(db, user, sender)
+        return await issue_otp(db, user)
+    return None
 
 
 async def authenticate_user(db: AsyncSession, *, email: str, password: str) -> User:

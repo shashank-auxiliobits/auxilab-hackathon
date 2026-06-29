@@ -46,7 +46,7 @@ class InvoiceCreate(APIModel):
     tax: Decimal | None = None
     grand_total: Decimal | None = None
     payment_terms: str | None = Field(default=None, max_length=64)
-    raw_text: str | None = None
+    raw_text: str | None = Field(default=None, max_length=200_000)
     source: str | None = Field(default=None, max_length=64)
     idempotency_key: str | None = Field(
         default=None,
@@ -60,7 +60,9 @@ class InvoiceCreate(APIModel):
 class InvoiceIngest(APIModel):
     """Ingest an invoice (text and/or a file) for GLM OCR extraction + processing."""
 
-    raw_text: str | None = Field(default=None, description="Raw invoice text, if available.")
+    raw_text: str | None = Field(
+        default=None, max_length=200_000, description="Raw invoice text, if available."
+    )
     file_base64: str | None = Field(
         default=None,
         description="Base64-encoded invoice file (image or PDF). For a single file; "

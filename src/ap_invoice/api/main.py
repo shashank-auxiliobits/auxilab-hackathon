@@ -9,12 +9,12 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 
 from ap_invoice.api.errors import register_exception_handlers
+from ap_invoice.api.ratelimit import limiter
 from ap_invoice.api.routes import (
     api_keys,
     auth,
@@ -49,8 +49,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging()
-
-    limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_limit])
 
     app = FastAPI(
         title="AP Invoice Intelligence",

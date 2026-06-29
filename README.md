@@ -34,19 +34,38 @@ Organization ──< API Keys (hashed)
                     └──< ProcessingEvent  (append-only audit trail)
 ```
 
-**Five MCP tools** (also exposed as REST endpoints):
+**MCP tools** an agent can call (also exposed as REST endpoints). Grouped by what they do:
 
+_Process / act_
 | Tool | What it does |
 |------|--------------|
-| **Invoice Field Extractor** | Parse raw invoice text → structured JSON (number, vendor, dates, line items, totals) with a **confidence score per field**. Hybrid engine: Claude API + deterministic fallback. |
-| **Duplicate Invoice Detector** | Detect exact & near-duplicates with fuzzy vendor matching and ±5% amount tolerance. |
-| **Vendor Name Normaliser** | Map messy vendor strings (`MSFT Corp.`) to the canonical vendor master; flag unknowns for onboarding. |
-| **Payment Terms Calculator** | Parse terms (`Net 30`, `2/10 Net 30`, `Due on Receipt`) → due date, discount deadline & amount, days remaining. |
-| **Invoice Completeness Checker** | Validate against a configurable mandatory-field list → completeness %, missing fields, recommended action (Process / Hold / Return). |
+| `process_invoice_text` | Full pipeline: extract → vendor → completeness → duplicates → terms → **policy decision**, persisted with an audit trail. Accepts text and/or multiple files. |
+| `extract_invoice_fields` | Vision OCR → structured JSON with a **confidence score per field**. |
+| `update_invoice_status` | Set approved / held / flagged / rejected (audited). |
 
-Plus a **deterministic rule-based policy engine** that combines these checks per vendor
-to recommend **Auto-Approve / Hold / Flag**, with every decision written to an immutable
-audit trail.
+_Calculators_
+| `calculate_payment_terms` (`Net 30`, `2/10 Net 30`, …) · `check_invoice_completeness` · `normalise_vendor_name` · `detect_duplicate_invoice` |
+
+_Query any invoice data_
+| Tool | What it does |
+|------|--------------|
+| `get_invoice` | Full detail: line items, per-field confidence, metadata (PO/notes), status, decision. |
+| `get_invoice_audit_trail` | Every event + recorded reasons — explains **why** an invoice was decided. |
+| `search_invoices` | Filter by status, vendor, number, amount range, date range, or free text. |
+| `get_vendor_policy` / `search_vendor_policy` | A vendor's policy documents & compiled rules; semantic (RAG) policy search. |
+| `list_invoices` · `list_vendors` | Paginated listings. |
+
+_Analytics_
+| Tool | What it does |
+|------|--------------|
+| `spend_analytics` | Total spend & counts by **vendor** (top spenders) or **month** (trend). |
+| `payables_aging` | Outstanding invoices bucketed by days-to-due (overdue / 0–7 / 8–30 / 31+). |
+| `discount_opportunities` | Invoices whose early-payment discount window is still open + capturable amount. |
+| `automation_metrics` · `invoice_stats` | Counts by status/decision and the **touchless automation rate**. |
+
+Plus a **policy engine** that judges each invoice against the vendor's uploaded policies
+(the source of truth) to recommend **Auto-Approve / Hold / Flag / Reject**, with every
+decision written to an immutable audit trail.
 
 ## Tech stack
 

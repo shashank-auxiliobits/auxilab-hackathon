@@ -20,7 +20,11 @@ from ap_invoice.schemas.common import APIModel, ORMModel
 class DocumentUpload(APIModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str | None = Field(default=None, max_length=100)
-    text: str = Field(min_length=1, description="Extracted text of the policy document.")
+    text: str = Field(
+        min_length=1,
+        max_length=1_000_000,
+        description="Extracted text of the policy document (max ~1 MB of characters).",
+    )
     compile: bool = Field(default=True, description="Compile structured rules immediately.")
     engine: Literal["llm", "deterministic"] | None = None
     replace: bool = Field(

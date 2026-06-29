@@ -175,13 +175,15 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def _require_smtp_in_production(self) -> Settings:
-        """In production/staging, refuse the console email backend (OTPs must be delivered)."""
+    def _validate_email_backend(self) -> Settings:
+        """Fail fast on an email backend that can't actually deliver."""
         if self.environment in ("production", "staging") and self.email_backend != "smtp":
             raise ValueError(
                 "Set AP_EMAIL_BACKEND=smtp (with AP_SMTP_HOST) in production so verification "
                 "emails are actually delivered."
             )
+        if self.email_backend == "smtp" and not self.smtp_host:
+            raise ValueError("AP_EMAIL_BACKEND=smtp requires AP_SMTP_HOST to be set.")
         return self
 
     @property

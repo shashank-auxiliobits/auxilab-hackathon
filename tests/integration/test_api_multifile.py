@@ -127,3 +127,27 @@ async def test_too_many_files_returns_422(client: AsyncClient, auth: dict[str, s
 async def test_no_text_or_file_returns_422(client: AsyncClient, auth: dict[str, str]) -> None:
     r = await client.post("/invoices/process", headers=auth, json={"source": "api"})
     assert r.status_code == 422, r.text
+
+
+async def test_tools_extract_bad_base64_returns_422(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
+    """/tools/extract now applies the same decode caps/validation as ingestion."""
+    r = await client.post(
+        "/tools/extract",
+        headers=auth,
+        json={"file_base64": "!!!not base64!!!", "content_type": "image/png"},
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_tools_extract_unsupported_type_returns_422(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
+    zip_b64 = base64.b64encode(b"PK\x03\x04 not an invoice").decode()
+    r = await client.post(
+        "/tools/extract",
+        headers=auth,
+        json={"file_base64": zip_b64, "content_type": "application/zip"},
+    )
+    assert r.status_code == 422, r.text

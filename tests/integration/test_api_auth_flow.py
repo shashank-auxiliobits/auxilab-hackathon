@@ -14,8 +14,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from ap_invoice.db.session import session_scope
+from ap_invoice.models.user import EmailVerification
 from ap_invoice.services.accounts import _latest_pending_verification, get_user_by_email
 from ap_invoice.services.email import EmailMessage
 
@@ -183,3 +185,48 @@ async def test_resend_always_accepted(client: AsyncClient) -> None:
     # Unknown email: still 202 (no account enumeration).
     r = await client.post("/auth/resend", json={"email": _email()})
     assert r.status_code == 202
+
+
+async def test_resend_invalidates_prior_otps(
+    client: AsyncClient, mailbox: _RecordingSender
+) -> None:
+    """Only the most recently issued code stays live (prior unconsumed are invalidated)."""
+    email = _email()
+    await client.post("/auth/register", json={"email": email, "password": "sup3r-secret-pw"})
+    await client.post("/auth/resend", json={"email": email})
+    second_code = _code(mailbox)  # the latest emailed code
+
+    async with session_scope() as db:
+        user = await get_user_by_email(db, email)
+        assert user is not None
+        live = (
+            (
+                await db.execute(
+                    select(EmailVerification).where(
+                        EmailVerification.user_id == user.id,
+                        EmailVerification.consumed_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(live) == 1, "exactly one verification code should be live after resend"
+    # The latest code still verifies.
+    assert (
+        await client.post("/auth/verify", json={"email": email, "code": second_code})
+    ).status_code == 200
+
+
+async def test_login_is_rate_limited(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-endpoint throttle blocks credential brute-force (limiter is on in non-test envs)."""
+    from ap_invoice.api.ratelimit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", True)
+    statuses = [
+        (
+            await client.post("/auth/login", json={"email": "nobody@example.com", "password": "x"})
+        ).status_code
+        for _ in range(12)  # AUTH_LOGIN_LIMIT is 10/minute
+    ]
+    assert 429 in statuses, f"expected a 429 after exceeding the login limit, got {statuses}"
